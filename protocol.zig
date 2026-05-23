@@ -6,6 +6,11 @@ const Io = std.Io;
 
 const BE = std.builtin.Endian.big;
 
+/// Request Header v2 => request_api_key request_api_version correlation_id client_id
+///   request_api_key => INT16
+///   request_api_version => INT16
+///   correlation_id => INT32
+///   client_id => NULLABLE_STRING
 pub const RequestHeader = struct {
     request_api_key: i16,
     request_api_version: i16,
@@ -25,11 +30,6 @@ pub const reader = struct {
         return try r.takeInt(i32, BE);
     }
 
-    /// Request Header v2 => request_api_key request_api_version correlation_id client_id
-    ///   request_api_key => INT16
-    ///   request_api_version => INT16
-    ///   correlation_id => INT32
-    ///   client_id => NULLABLE_STRING
     pub fn req_header(r: *Io.Reader, buf: []u8) !RequestHeader {
         return RequestHeader{
             .request_api_key = try r.takeInt(i16, BE),

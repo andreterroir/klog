@@ -4,7 +4,6 @@ const net = std.Io.net;
 const Io = std.Io;
 
 const proto = @import("protocol.zig");
-const reader = proto.reader;
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
@@ -30,6 +29,8 @@ fn serve(stream: net.Stream, io: std.Io) !void {
 }
 
 fn respond(stream: net.Stream, io_reader: *Io.Reader, io: std.Io) !void {
+    const reader = proto.reader;
+
     const req_size = try reader.msg_size(io_reader);
     log.info("expecting a request of {d} bytes", .{req_size});
 
