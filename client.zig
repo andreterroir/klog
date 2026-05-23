@@ -3,9 +3,10 @@ const log = std.log;
 const net = std.Io.net;
 
 const proto = @import("protocol.zig");
-const writer = proto.writer;
 
 pub fn main(init: std.process.Init) !void {
+    const writer = proto.writer;
+
     const io = init.io;
     const addr = try net.IpAddress.parse("::1", 8080);
     var stream = try addr.connect(io, .{ .mode = .stream });
