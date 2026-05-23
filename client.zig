@@ -2,7 +2,7 @@ const std = @import("std");
 const log = std.log;
 const net = std.Io.net;
 
-const proto = @import("protocol.zig");
+const proto = @import("protocol");
 
 pub fn main(init: std.process.Init) !void {
     const writer = proto.writer;

@@ -1,0 +1,13 @@
+.{
+    .name = .klog,
+    .version = "0.0.0",
+    .fingerprint = 0xbd1d1ec92838a636,
+    .minimum_zig_version = "0.16.0",
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "klog.zig",
+        "client.zig",
+        "protocol.zig",
+    },
+}

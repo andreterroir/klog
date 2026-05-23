@@ -3,7 +3,7 @@ const log = std.log;
 const net = std.Io.net;
 const Io = std.Io;
 
-const proto = @import("protocol.zig");
+const proto = @import("protocol");
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
