@@ -1,6 +1,6 @@
 # klog
 
-A Kafka-protocol log server in Zig, plus a small client.
+A Kafka-protocol compatible log server and a Zig client.
 
 ## Requirements
 
