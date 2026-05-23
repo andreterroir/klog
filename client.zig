@@ -15,4 +15,11 @@ pub fn main(init: std.process.Init) !void {
     var writer = stream.writer(io, &.{});
 
     try proto.write_msg_size(&writer.interface, 0);
+    const req_header = proto.RequestHeader{
+        .request_api_key = 0, // produce
+        .request_api_version = 13, // latest produce
+        .correlation_id = 42,
+        .client_id = "test-client",
+    };
+    try proto.write_req_header(&writer.interface, req_header);
 }
