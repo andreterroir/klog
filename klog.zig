@@ -35,7 +35,10 @@ fn respond(stream: net.Stream, reader: *Io.Reader, io: std.Io) !void {
     const writer = stream.writer(io, &.{});
     _ = writer;
 
-    // parse message type and dispatch
+    const max_client_id = 1024;
+    var buf: [max_client_id]u8 = undefined;
+    const req_header = try proto.read_req_header(reader, &buf);
+    log.debug("request header: {}", .{req_header});
 
     // produce()
     // fetch()
