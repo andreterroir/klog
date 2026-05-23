@@ -6,11 +6,6 @@ const Io = std.Io;
 
 const BE = std.builtin.Endian.big;
 
-/// Request Header v2 => request_api_key request_api_version correlation_id client_id
-///   request_api_key => INT16
-///   request_api_version => INT16
-///   correlation_id => INT32
-///   client_id => NULLABLE_STRING
 pub const RequestHeader = struct {
     request_api_key: i16,
     request_api_version: i16,
@@ -30,6 +25,11 @@ pub const reader = struct {
         return try r.takeInt(i32, BE);
     }
 
+    /// Request Header v2 => request_api_key request_api_version correlation_id client_id
+    ///   request_api_key => INT16
+    ///   request_api_version => INT16
+    ///   correlation_id => INT32
+    ///   client_id => NULLABLE_STRING
     pub fn req_header(r: *Io.Reader, buf: []u8) !RequestHeader {
         return RequestHeader{
             .request_api_key = try r.takeInt(i16, BE),
@@ -39,11 +39,11 @@ pub const reader = struct {
         };
     }
 
-    // NULLABLE_STRING
-    // Represents a sequence of characters or null. For non-null strings, first the
-    // length N is given as an INT16. Then N bytes follow which are the UTF-8
-    // encoding of the character sequence. A null value is encoded with length of
-    // -1 and there are no following bytes.
+    /// NULLABLE_STRING
+    /// Represents a sequence of characters or null. For non-null strings, first the
+    /// length N is given as an INT16. Then N bytes follow which are the UTF-8
+    /// encoding of the character sequence. A null value is encoded with length of
+    /// -1 and there are no following bytes.
     fn nullable_str(r: *Io.Reader, buf: []u8) !?[]u8 {
         const len = try r.takeInt(i16, BE);
         if (len == -1) return null;
