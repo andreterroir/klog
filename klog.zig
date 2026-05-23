@@ -4,6 +4,7 @@ const net = std.Io.net;
 const Io = std.Io;
 
 const proto = @import("protocol.zig");
+const reader = proto.reader;
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
@@ -29,7 +30,7 @@ fn serve(stream: net.Stream, io: std.Io) !void {
 }
 
 fn respond(stream: net.Stream, io_reader: *Io.Reader, io: std.Io) !void {
-    const req_size = try proto.reader.msg_size(io_reader);
+    const req_size = try reader.msg_size(io_reader);
     log.info("expecting a request of {d} bytes", .{req_size});
 
     const stream_writer = stream.writer(io, &.{});
@@ -37,7 +38,7 @@ fn respond(stream: net.Stream, io_reader: *Io.Reader, io: std.Io) !void {
 
     const max_client_id = 1024;
     var buf: [max_client_id]u8 = undefined;
-    const req_header = try proto.reader.req_header(io_reader, &buf);
+    const req_header = try reader.req_header(io_reader, &buf);
     log.debug("request header: {}", .{req_header});
 
     // produce()
