@@ -12,14 +12,15 @@ pub fn main(init: std.process.Init) !void {
     log.info("connected to {f}", .{addr});
 
     // unbuffered writer
-    var writer = stream.writer(io, &.{});
+    var stream_writer = stream.writer(io, &.{});
+    const io_writer = &stream_writer.interface;
 
-    try proto.writer.msg_size(&writer.interface, 0);
+    try proto.writer.msg_size(io_writer, 0);
     const req_header = proto.RequestHeader{
         .request_api_key = 0, // produce
         .request_api_version = 13, // latest produce
         .correlation_id = 42,
         .client_id = "test-client",
     };
-    try proto.writer.req_header(&writer.interface, req_header);
+    try proto.writer.req_header(io_writer, req_header);
 }
