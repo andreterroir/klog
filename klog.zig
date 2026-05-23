@@ -22,30 +22,32 @@ pub fn main(init: std.process.Init) !void {
 
 fn serve(stream: net.Stream, io: std.Io) !void {
     var buf: [1024]u8 = undefined;
-    var reader = stream.reader(io, &buf);
+    var stream_reader = stream.reader(io, &buf);
 
     // parse message
-    try respond(stream, &reader.interface, io);
+    try respond(stream, &stream_reader.interface, io);
 }
 
-fn respond(stream: net.Stream, reader: *Io.Reader, io: std.Io) !void {
-    const req_size = try proto.read_msg_size(reader);
+fn respond(stream: net.Stream, io_reader: *Io.Reader, io: std.Io) !void {
+    const reader = proto.reader;
+
+    const req_size = try reader.msg_size(io_reader);
     log.info("expecting a request of {d} bytes", .{req_size});
 
-    const writer = stream.writer(io, &.{});
-    _ = writer;
+    const stream_writer = stream.writer(io, &.{});
+    _ = stream_writer;
 
     const max_client_id = 1024;
     var buf: [max_client_id]u8 = undefined;
-    const req_header = try proto.read_req_header(reader, &buf);
+    const req_header = try reader.req_header(io_reader, &buf);
     log.debug("request header: {}", .{req_header});
 
     // produce()
     // fetch()
 }
 
-fn produce(stream: std.Io.net.Stream, reader: std.Io.net.Stream.Reader, io: std.Io) !void {
+fn produce(stream: std.Io.net.Stream, stream_reader: std.Io.net.Stream.Reader, io: std.Io) !void {
     _ = stream;
-    _ = reader;
+    _ = stream_reader;
     _ = io;
 }
