@@ -15,19 +15,19 @@ pub fn main(init: std.process.Init) !void {
     while (true) {
         var stream = try server.accept(io);
         errdefer stream.close(io);
-        const thread = try std.Thread.spawn(.{}, serve, .{ stream, io });
+        const thread = try std.Thread.spawn(.{}, serve, .{ io, stream });
         thread.detach();
     }
 }
 
-fn serve(stream: net.Stream, io: std.Io) !void {
+fn serve(io: Io, stream: net.Stream) !void {
     var buf: [1024]u8 = undefined;
     var stream_reader = stream.reader(io, &buf);
 
-    try respond(stream, &stream_reader.interface, io);
+    try respond(io, &stream_reader.interface, stream);
 }
 
-fn respond(stream: net.Stream, io_reader: *Io.Reader, io: std.Io) !void {
+fn respond(io: Io, io_reader: *Io.Reader, stream: net.Stream) !void {
     const reader = proto.reader;
 
     const req_size = try reader.msg_size(io_reader);
@@ -43,12 +43,12 @@ fn respond(stream: net.Stream, io_reader: *Io.Reader, io: std.Io) !void {
     _ = stream_writer;
 
     try switch (req_header.api_key) {
-        .produce => produce(stream, io_reader, io),
+        .produce => produce(io, io_reader, stream),
         else => std.log.err("unsupported API: {}", .{req_header.api_key}),
     };
 }
 
-fn produce(stream: std.Io.net.Stream, io_reader: *Io.Reader, io: std.Io) !void {
+fn produce(io: Io, io_reader: *Io.Reader, stream: Io.net.Stream) !void {
     _ = stream;
     _ = io_reader;
     _ = io;
