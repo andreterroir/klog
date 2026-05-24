@@ -35,4 +35,10 @@ pub fn build(b: *std.Build) void {
         }),
     });
     b.installArtifact(client);
+
+    const protocol_tests = b.addTest(.{ .root_module = protocol });
+    const run_protocol_tests = b.addRunArtifact(protocol_tests);
+
+    const test_step = b.step("test", "Run unit tests");
+    test_step.dependOn(&run_protocol_tests.step);
 }
