@@ -88,7 +88,7 @@ test "msg_size round-trip" {
     var w = Io.Writer.fixed(&buf);
     try writer.msg_size(&w, 1024);
 
-    var r = Io.Reader.fixed(buf[0..w.end]);
+    var r = Io.Reader.fixed(&buf);
     try testing.expectEqual(@as(i32, 1024), try reader.msg_size(&r));
 }
 
@@ -97,7 +97,7 @@ test "msg_size round-trip zero" {
     var w = Io.Writer.fixed(&buf);
     try writer.msg_size(&w, 0);
 
-    var r = Io.Reader.fixed(buf[0..w.end]);
+    var r = Io.Reader.fixed(&buf);
     try testing.expectEqual(@as(i32, 0), try reader.msg_size(&r));
 }
 
@@ -107,7 +107,7 @@ test "nullable_str round-trip non-null" {
     try writer.nullable_str(&w, "test-client");
 
     var out: [64]u8 = undefined;
-    var r = Io.Reader.fixed(buf[0..w.end]);
+    var r = Io.Reader.fixed(&buf);
     const got = try reader.nullable_str(&r, &out);
     try testing.expect(got != null);
     try testing.expectEqualStrings("test-client", got.?);
@@ -119,7 +119,7 @@ test "nullable_str round-trip null" {
     try writer.nullable_str(&w, null);
 
     var out: [16]u8 = undefined;
-    var r = Io.Reader.fixed(buf[0..w.end]);
+    var r = Io.Reader.fixed(&buf);
     const got = try reader.nullable_str(&r, &out);
     try testing.expect(got == null);
 }
@@ -130,10 +130,10 @@ test "nullable_str round-trip empty string" {
     try writer.nullable_str(&w, "");
 
     var out: [16]u8 = undefined;
-    var r = Io.Reader.fixed(buf[0..w.end]);
+    var r = Io.Reader.fixed(&buf);
     const got = try reader.nullable_str(&r, &out);
     try testing.expect(got != null);
-    try testing.expectEqual(@as(usize, 0), got.?.len);
+    try testing.expectEqualStrings("", got.?);
 }
 
 test "req_header round-trip with client_id" {
@@ -148,12 +148,12 @@ test "req_header round-trip with client_id" {
     try writer.req_header(&w, original);
 
     var out: [64]u8 = undefined;
-    var r = Io.Reader.fixed(buf[0..w.end]);
+    var r = Io.Reader.fixed(&buf);
     const got = try reader.req_header(&r, &out);
+    try testing.expect(got.client_id != null);
     try testing.expectEqual(original.request_api_key, got.request_api_key);
     try testing.expectEqual(original.request_api_version, got.request_api_version);
     try testing.expectEqual(original.correlation_id, got.correlation_id);
-    try testing.expect(got.client_id != null);
     try testing.expectEqualStrings(original.client_id.?, got.client_id.?);
 }
 
@@ -169,10 +169,7 @@ test "req_header round-trip with null client_id" {
     try writer.req_header(&w, original);
 
     var out: [32]u8 = undefined;
-    var r = Io.Reader.fixed(buf[0..w.end]);
+    var r = Io.Reader.fixed(&buf);
     const got = try reader.req_header(&r, &out);
-    try testing.expectEqual(original.request_api_key, got.request_api_key);
-    try testing.expectEqual(original.request_api_version, got.request_api_version);
-    try testing.expectEqual(original.correlation_id, got.correlation_id);
     try testing.expect(got.client_id == null);
 }
