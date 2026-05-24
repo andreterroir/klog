@@ -154,7 +154,7 @@ test "req_header round-trip with client_id" {
     try testing.expectEqual(original.request_api_key, got.request_api_key);
     try testing.expectEqual(original.request_api_version, got.request_api_version);
     try testing.expectEqual(original.correlation_id, got.correlation_id);
-    try testing.expectEqualStrings(original.client_id.?, got.client_id.?);
+    try testing.expectEqualStrings("test-client", got.client_id.?);
 }
 
 test "req_header round-trip with null client_id" {
