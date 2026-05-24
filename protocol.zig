@@ -6,17 +6,25 @@ const Io = std.Io;
 
 const BE = std.builtin.Endian.big;
 
+pub const ApiKey = enum(i16) {
+    produce = 0,
+    fetch = 1,
+};
+
 /// Request Header v2 => request_api_key request_api_version correlation_id client_id
 ///   request_api_key => INT16
 ///   request_api_version => INT16
 ///   correlation_id => INT32
 ///   client_id => NULLABLE_STRING
 pub const RequestHeader = struct {
-    request_api_key: i16,
+    request_api_key: ApiKey,
     request_api_version: i16,
     correlation_id: i32,
     client_id: ?[]const u8,
 };
+
+pub const FetchRequest = struct {};
+pub const FetchResponse = struct {};
 
 pub const reader = struct {
     const Error = error{
@@ -32,7 +40,7 @@ pub const reader = struct {
 
     pub fn req_header(r: *Io.Reader, buf: []u8) !RequestHeader {
         return RequestHeader{
-            .request_api_key = try r.takeInt(i16, BE),
+            .request_api_key = @enumFromInt(try r.takeInt(i16, BE)),
             .request_api_version = try r.takeInt(i16, BE),
             .correlation_id = try r.takeInt(i32, BE),
             .client_id = try nullable_str(r, buf),
@@ -61,7 +69,7 @@ pub const writer = struct {
     }
 
     pub fn req_header(w: *Io.Writer, header: RequestHeader) !void {
-        try w.writeInt(i16, header.request_api_key, BE);
+        try w.writeInt(i16, @intFromEnum(header.request_api_key), BE);
         try w.writeInt(i16, header.request_api_version, BE);
         try w.writeInt(i32, header.correlation_id, BE);
         try nullable_str(w, header.client_id);

@@ -24,7 +24,6 @@ fn serve(stream: net.Stream, io: std.Io) !void {
     var buf: [1024]u8 = undefined;
     var stream_reader = stream.reader(io, &buf);
 
-    // parse message
     try respond(stream, &stream_reader.interface, io);
 }
 
@@ -34,20 +33,23 @@ fn respond(stream: net.Stream, io_reader: *Io.Reader, io: std.Io) !void {
     const req_size = try reader.msg_size(io_reader);
     log.info("expecting a request of {d} bytes", .{req_size});
 
-    const stream_writer = stream.writer(io, &.{});
-    _ = stream_writer;
-
     const max_client_id = 1024;
     var buf: [max_client_id]u8 = undefined;
     const req_header = try reader.req_header(io_reader, &buf);
     log.debug("request header: {}", .{req_header});
+    log.debug("request API key: {}", .{req_header.request_api_key});
 
-    // produce()
-    // fetch()
+    const stream_writer = stream.writer(io, &.{});
+    _ = stream_writer;
+
+    try switch (req_header.request_api_key) {
+        .produce => produce(stream, io_reader, io),
+        else => std.log.err("unsupported API: {}", .{req_header.request_api_key}),
+    };
 }
 
-fn produce(stream: std.Io.net.Stream, stream_reader: std.Io.net.Stream.Reader, io: std.Io) !void {
+fn produce(stream: std.Io.net.Stream, io_reader: *Io.Reader, io: std.Io) !void {
     _ = stream;
-    _ = stream_reader;
+    _ = io_reader;
     _ = io;
 }

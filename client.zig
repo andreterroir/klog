@@ -19,7 +19,7 @@ pub fn main(init: std.process.Init) !void {
 
     try writer.msg_size(io_writer, 0);
     const req_header = proto.RequestHeader{
-        .request_api_key = 0, // produce
+        .request_api_key = proto.ApiKey.produce,
         .request_api_version = 13, // latest produce
         .correlation_id = 42,
         .client_id = "test-client",
