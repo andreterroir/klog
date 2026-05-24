@@ -10,6 +10,7 @@ const BE = std.builtin.Endian.big;
 pub const ApiKey = enum(i16) {
     produce = 0,
     fetch = 1,
+    _,
 };
 
 /// Request Header v2 => request_api_key request_api_version correlation_id client_id
@@ -138,11 +139,15 @@ pub const reader = struct {
 
     pub fn req_header(r: *Io.Reader, buf: []u8) !RequestHeader {
         return RequestHeader{
-            .api_key = @enumFromInt(try r.takeInt(i16, BE)),
+            .api_key = try api_key(r),
             .api_version = try r.takeInt(i16, BE),
             .correlation_id = try r.takeInt(i32, BE),
             .client_id = try nullable_str(r, buf),
         };
+    }
+
+    fn api_key(r: *Io.Reader) !ApiKey {
+        return @enumFromInt(try r.takeInt(i16, BE));
     }
 
     /// NULLABLE_STRING
@@ -243,7 +248,7 @@ test "req_header round-trip with client_id" {
     var buf: [64]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
     const written = RequestHeader{
-        .api_key = 0,
+        .api_key = .produce,
         .api_version = 13,
         .correlation_id = 42,
         .client_id = "test-client",
@@ -264,7 +269,7 @@ test "req_header round-trip with null client_id" {
     var buf: [32]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
     const written = RequestHeader{
-        .api_key = 1,
+        .api_key = .fetch,
         .api_version = 7,
         .correlation_id = -1,
         .client_id = null,
@@ -275,4 +280,18 @@ test "req_header round-trip with null client_id" {
     var r = Io.Reader.fixed(&buf);
     const read = try reader.req_header(&r, &out);
     try testing.expect(read.client_id == null);
+}
+
+test "req_header round-trip with unsupported api_key" {
+    var buf: [32]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    const unsupported_api_key = 255; // not mapped in ApiKey
+    try w.writeInt(i16, unsupported_api_key, BE);
+
+    var r = Io.Reader.fixed(&buf);
+    const read = try reader.api_key(&r);
+    switch (read) {
+        _ => {},
+        else => try std.testing.expect(false),
+    }
 }
