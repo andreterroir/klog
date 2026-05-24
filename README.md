@@ -2,6 +2,9 @@
 
 A Kafka-protocol compatible log server and a Zig client.
 
+> [!NOTE]
+> Status: proof of concept
+
 ## Requirements
 
 [Zig](https://ziglang.org/download/) **0.16.0** or newer.
