@@ -37,14 +37,14 @@ fn respond(stream: net.Stream, io_reader: *Io.Reader, io: std.Io) !void {
     var buf: [max_client_id]u8 = undefined;
     const req_header = try reader.req_header(io_reader, &buf);
     log.debug("request header: {}", .{req_header});
-    log.debug("request API key: {}", .{req_header.request_api_key});
+    log.debug("request API key: {}", .{req_header.api_key});
 
     const stream_writer = stream.writer(io, &.{});
     _ = stream_writer;
 
-    try switch (req_header.request_api_key) {
+    try switch (req_header.api_key) {
         .produce => produce(stream, io_reader, io),
-        else => std.log.err("unsupported API: {}", .{req_header.request_api_key}),
+        else => std.log.err("unsupported API: {}", .{req_header.api_key}),
     };
 }
 

@@ -17,8 +17,8 @@ pub const ApiKey = enum(i16) {
 ///   correlation_id => INT32
 ///   client_id => NULLABLE_STRING
 pub const RequestHeader = struct {
-    request_api_key: ApiKey,
-    request_api_version: i16,
+    api_key: ApiKey,
+    api_version: i16,
     correlation_id: i32,
     client_id: ?[]const u8,
 };
@@ -40,8 +40,8 @@ pub const reader = struct {
 
     pub fn req_header(r: *Io.Reader, buf: []u8) !RequestHeader {
         return RequestHeader{
-            .request_api_key = @enumFromInt(try r.takeInt(i16, BE)),
-            .request_api_version = try r.takeInt(i16, BE),
+            .api_key = @enumFromInt(try r.takeInt(i16, BE)),
+            .api_version = try r.takeInt(i16, BE),
             .correlation_id = try r.takeInt(i32, BE),
             .client_id = try nullable_str(r, buf),
         };
@@ -69,8 +69,8 @@ pub const writer = struct {
     }
 
     pub fn req_header(w: *Io.Writer, header: RequestHeader) !void {
-        try w.writeInt(i16, @intFromEnum(header.request_api_key), BE);
-        try w.writeInt(i16, header.request_api_version, BE);
+        try w.writeInt(i16, @intFromEnum(header.api_key), BE);
+        try w.writeInt(i16, header.api_version, BE);
         try w.writeInt(i32, header.correlation_id, BE);
         try nullable_str(w, header.client_id);
     }
@@ -148,8 +148,8 @@ test "req_header round-trip with client_id" {
     var buf: [64]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
     const written = RequestHeader{
-        .request_api_key = 0,
-        .request_api_version = 13,
+        .api_key = 0,
+        .api_version = 13,
         .correlation_id = 42,
         .client_id = "test-client",
     };
@@ -158,8 +158,8 @@ test "req_header round-trip with client_id" {
     var out: [64]u8 = undefined;
     var r = Io.Reader.fixed(&buf);
     const read = try reader.req_header(&r, &out);
-    try testing.expectEqual(written.request_api_key, read.request_api_key);
-    try testing.expectEqual(written.request_api_version, read.request_api_version);
+    try testing.expectEqual(written.api_key, read.api_key);
+    try testing.expectEqual(written.api_version, read.api_version);
     try testing.expectEqual(written.correlation_id, read.correlation_id);
     try testing.expect(read.client_id != null);
     try testing.expectEqualStrings("test-client", read.client_id.?);
@@ -169,8 +169,8 @@ test "req_header round-trip with null client_id" {
     var buf: [32]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
     const written = RequestHeader{
-        .request_api_key = 1,
-        .request_api_version = 7,
+        .api_key = 1,
+        .api_version = 7,
         .correlation_id = -1,
         .client_id = null,
     };
