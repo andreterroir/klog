@@ -1,4 +1,4 @@
-//! https://kafka.apache.org/42/design/protocol/
+//! https://kafka.apache.org/43/design/protocol/
 
 const std = @import("std");
 const net = std.Io.net;
@@ -6,7 +6,7 @@ const Io = std.Io;
 
 const BE = std.builtin.Endian.big;
 
-/// https://kafka.apache.org/42/design/protocol/#api-keys
+/// https://kafka.apache.org/43/design/protocol/#api-keys
 pub const ApiKey = enum(i16) {
     produce = 0,
     fetch = 1,
