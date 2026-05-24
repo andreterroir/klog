@@ -150,10 +150,10 @@ test "req_header round-trip with client_id" {
     var out: [64]u8 = undefined;
     var r = Io.Reader.fixed(&buf);
     const read = try reader.req_header(&r, &out);
-    try testing.expect(read.client_id != null);
     try testing.expectEqual(written.request_api_key, read.request_api_key);
     try testing.expectEqual(written.request_api_version, read.request_api_version);
     try testing.expectEqual(written.correlation_id, read.correlation_id);
+    try testing.expect(read.client_id != null);
     try testing.expectEqualStrings("test-client", read.client_id.?);
 }
 
