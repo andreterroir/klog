@@ -50,6 +50,12 @@ fn respond(io: Io, io_reader: *Io.Reader, stream: net.Stream) !void {
 
 fn produce(io: Io, io_reader: *Io.Reader, stream: Io.net.Stream) !void {
     _ = stream;
-    _ = io_reader;
     _ = io;
+
+    const reader = proto.reader;
+
+    const max_transactional_id = 1024;
+    var buf: [max_transactional_id]u8 = undefined;
+    const req = try reader.produce_req(io_reader, &buf);
+    log.debug("produce request: {}", .{req});
 }

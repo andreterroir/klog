@@ -29,16 +29,25 @@ pub const RequestHeader = struct {
 //  correlation_id => INT32
 pub const ResponseHeader = struct {};
 
-/// Produce Request (Version: 13) => transactional_id acks timeout_ms [topic_data]
+/// Represents the fixed part of Produce API request.
+///
+/// Produce Request (Version: 13) => { transactional_id acks timeout_ms (topic_data) }
 ///   transactional_id => COMPACT_NULLABLE_STRING
 ///   acks => INT16
 ///   timeout_ms => INT32
-///   topic_data => topic_id [partition_data]
+///   topic_data => { topic_id (partition_data) }
 ///     topic_id => UUID
-///     partition_data => index records
+///     partition_data => { index records }
 ///       index => INT32
-///       records => COMPACT_RECORDS
-pub const ProduceRequest = struct{};
+///       records => COMPACT_NULLABLE_RECORDS
+pub const ProduceRequest = struct {
+    transactional_id: ?[]const u8,
+    acks: i16,
+    timeout_ms: i32,
+    // TODO implement UUID type
+    topic_id: [16]u8 = undefined,
+    partition_index: i32,
+};
 
 /// Produce Response (Version: 12) => [responses] throttle_time_ms node_endpoints]<tag: 0>
 ///   responses => name [partition_responses]
@@ -62,7 +71,7 @@ pub const ProduceRequest = struct{};
 ///     host => COMPACT_STRING
 ///     port => INT32
 ///     rack => COMPACT_NULLABLE_STRING[
-pub const ProduceResponse = struct{};
+pub const ProduceResponse = struct {};
 
 /// Fetch Request (Version: 18) => max_wait_ms min_bytes max_bytes isolation_level session_id session_epoch [topics] [forgotten_topics_data] rack_id cluster_id<tag: 0> replica_state<tag: 1>
 ///   max_wait_ms => INT32
@@ -146,6 +155,18 @@ pub const reader = struct {
         };
     }
 
+    /// buf has to be large enough to hold transactional_id
+    pub fn produce_req(r: *Io.Reader, buf: []u8) !ProduceRequest {
+        var req = ProduceRequest{
+            .transactional_id = try compact_nullable_str(r, buf),
+            .acks = try r.takeInt(i16, BE),
+            .timeout_ms = try r.takeInt(i32, BE),
+            .partition_index = try r.takeInt(i32, BE),
+        };
+        try r.readSliceAll(&req.topic_id);
+        return req;
+    }
+
     fn api_key(r: *Io.Reader) !ApiKey {
         return @enumFromInt(try r.takeInt(i16, BE));
     }
@@ -164,6 +185,17 @@ pub const reader = struct {
         try r.readSliceAll(buf[0..l]);
         return buf[0..l];
     }
+
+    /// COMPACT_NULLABLE_STRING Represents a sequence of characters.
+    //First the length N + 1 is given as an UNSIGNED_VARINT . Then N
+    //bytes follow which are the UTF-8 encoding of the character
+    //sequence. A null string is represented with a length of 0.
+    fn compact_nullable_str(r: *Io.Reader, buf: []u8) !?[]u8 {
+        // XXX
+        _ = r;
+        _ = buf;
+        return null;
+    }
 };
 
 pub const writer = struct {
@@ -178,6 +210,14 @@ pub const writer = struct {
         try nullable_str(w, header.client_id);
     }
 
+    pub fn produce_req(w: *Io.Writer, req: ProduceRequest) !void {
+        try compact_nullable_str(w, req.transactional_id);
+        try w.writeInt(i16, req.acks, BE);
+        try w.writeInt(i32, req.timeout_ms, BE);
+        try w.writeAll(&req.topic_id);
+        try w.writeInt(i32, req.partition_index, BE);
+    }
+
     fn nullable_str(w: *Io.Writer, str: ?[]const u8) !void {
         if (str) |s| {
             const len: i16 = @intCast(s.len);
@@ -186,6 +226,12 @@ pub const writer = struct {
         } else {
             try w.writeInt(i16, -1, BE);
         }
+    }
+
+    fn compact_nullable_str(w: *Io.Writer, str: ?[]const u8) !void {
+        // XXX
+        _ = w;
+        _ = str;
     }
 };
 
@@ -244,6 +290,15 @@ test "nullable_str round-trip empty string" {
     try testing.expectEqualStrings("", read.?);
 }
 
+test "compact_nullable_str round-trip" {
+}
+
+test "compact_nullable_str round-trip null" {
+}
+
+test "compact_nullable_str round-trip empty string" {
+}
+
 test "req_header round-trip with client_id" {
     var buf: [64]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
@@ -294,4 +349,12 @@ test "req_header round-trip with unsupported api_key" {
         _ => {},
         else => try std.testing.expect(false),
     }
+}
+
+test "produce request" {
+    // XXX
+}
+
+test "produce request without transactional_id" {
+    // XXX
 }
