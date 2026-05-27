@@ -163,6 +163,7 @@ pub const reader = struct {
             .timeout_ms = try r.takeInt(i32, BE),
             .partition_index = try r.takeInt(i32, BE),
         };
+        // FIXME must be read before partition index
         try r.readSliceAll(&req.topic_id);
         return req;
     }
@@ -195,6 +196,18 @@ pub const reader = struct {
         _ = r;
         _ = buf;
         return null;
+    }
+
+    /// https://protobuf.dev/programming-guides/encoding/#varints
+    fn unsigned_varint(r: *Io.Reader) !u64 {
+        var res: u64 = 0;
+        var i: usize = 0;
+        while (true) : (i += 1) {
+            const b_signed = try r.takeByte();
+            res |= (b_signed & 0x7f) << @intCast(7 * i);
+            if (b_signed & 0x80 == 0) break;
+        }
+        return res;
     }
 };
 
@@ -233,6 +246,12 @@ pub const writer = struct {
         _ = w;
         _ = str;
     }
+
+    fn unsigned_varint(w: *Io.Writer, v: u64) !void {
+        // XXX
+        _ = w;
+        _ = v;
+    }
 };
 
 const testing = std.testing;
@@ -253,6 +272,25 @@ test "msg_size round-trip zero" {
 
     var r = Io.Reader.fixed(&buf);
     try testing.expectEqual(@as(i32, 0), try reader.msg_size(&r));
+}
+
+test "readInt" {
+    var buf = [_]u8{0} ** 8;
+    buf[0] = 1;
+    try testing.expectEqual(1, std.mem.readInt(u64, &buf, std.builtin.Endian.little));
+}
+
+test "unsigned_varint" {
+
+    try expectVarintBytesEqual(1, 0b1);
+    try expectVarintBytesEqual(150, 0b00000001_10010110);
+}
+
+fn expectVarintBytesEqual(v: u64, bytes: u80) !void {
+    var buf: [10]u8 = undefined;
+    std.mem.writeInt(u80, &buf, bytes, std.builtin.Endian.little);
+    var r = Io.Reader.fixed(&buf);
+    try testing.expectEqual(v, try reader.unsigned_varint(&r));
 }
 
 test "nullable_str round-trip non-null" {
@@ -290,14 +328,11 @@ test "nullable_str round-trip empty string" {
     try testing.expectEqualStrings("", read.?);
 }
 
-test "compact_nullable_str round-trip" {
-}
+test "compact_nullable_str round-trip" {}
 
-test "compact_nullable_str round-trip null" {
-}
+test "compact_nullable_str round-trip null" {}
 
-test "compact_nullable_str round-trip empty string" {
-}
+test "compact_nullable_str round-trip empty string" {}
 
 test "req_header round-trip with client_id" {
     var buf: [64]u8 = undefined;
