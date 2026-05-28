@@ -2,3 +2,4 @@ klog
 client
 zig-out/
 .zig-cache/
+.zig/
