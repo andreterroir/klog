@@ -293,6 +293,16 @@ fn expectVarintBytesEqual(v: u64, bytes: u80) !void {
     try testing.expectEqual(v, try reader.unsigned_varint(&r));
 }
 
+test "unsigned_varint stops at varint boundary" {
+    // 150 encodes as 0x96 0x01; the parser must not consume the trailing
+    // bytes even when their continuation bit is set.
+    const buf = [_]u8{ 0x96, 0x01, 0xff, 0xff };
+    var r = Io.Reader.fixed(&buf);
+    try testing.expectEqual(@as(u64, 150), try reader.unsigned_varint(&r));
+    try testing.expectEqual(@as(u8, 0xff), try r.takeByte());
+    try testing.expectEqual(@as(u8, 0xff), try r.takeByte());
+}
+
 test "nullable_str round-trip non-null" {
     var buf: [64]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
