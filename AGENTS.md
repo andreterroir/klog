@@ -38,6 +38,11 @@ build or test commands, the file layout, module names exposed via
 `build.zig`, or the conventions section. If a change makes a statement
 here wrong, the change is incomplete until this file matches.
 
+## Pull requests
+
+If later commits change a PR's scope, update its title and description to
+match the final diff before asking for review.
+
 <!--
 Suggested additions once the project grows past proof-of-concept (useful
 for agents as well as humans, so worth promoting into this file):
