@@ -203,9 +203,9 @@ pub const reader = struct {
         var res: u64 = 0;
         var i: usize = 0;
         while (true) : (i += 1) {
-            const b_signed = try r.takeByte();
-            res |= (b_signed & 0x7f) << @intCast(7 * i);
-            if (b_signed & 0x80 == 0) break;
+            const b = try r.takeByte();
+            res |= @as(u64, b & 0x7f) << @intCast(7 * i);
+            if (b & 0x80 == 0) break;
         }
         return res;
     }
@@ -301,6 +301,26 @@ test "unsigned_varint stops at varint boundary" {
     try testing.expectEqual(@as(u64, 150), try reader.unsigned_varint(&r));
     try testing.expectEqual(@as(u8, 0xff), try r.takeByte());
     try testing.expectEqual(@as(u8, 0xff), try r.takeByte());
+}
+
+test "unsigned_varint multi-byte values" {
+    try expectVarintRoundTrip(&[_]u8{0x7f}, 127);
+    try expectVarintRoundTrip(&[_]u8{ 0x80, 0x01 }, 128);
+    try expectVarintRoundTrip(&[_]u8{ 0xff, 0x7f }, 16383);
+    try expectVarintRoundTrip(&[_]u8{ 0x80, 0x80, 0x01 }, 16384);
+    try expectVarintRoundTrip(
+        &[_]u8{ 0xff, 0xff, 0xff, 0xff, 0x0f },
+        std.math.maxInt(u32),
+    );
+    try expectVarintRoundTrip(
+        &[_]u8{ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01 },
+        std.math.maxInt(u64),
+    );
+}
+
+fn expectVarintRoundTrip(bytes: []const u8, v: u64) !void {
+    var r = Io.Reader.fixed(bytes);
+    try testing.expectEqual(v, try reader.unsigned_varint(&r));
 }
 
 test "nullable_str round-trip non-null" {
