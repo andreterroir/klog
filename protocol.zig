@@ -204,6 +204,8 @@ pub const reader = struct {
         var i: usize = 0;
         while (i < 10) : (i += 1) {
             const b = try r.takeByte();
+            // Only one bit of payload fits in the 10th byte of a u64 LEB128.
+            if (i == 9 and b & 0x7f > 1) return Error.ProtocolError;
             res |= @as(u64, b & 0x7f) << @intCast(7 * i);
             if (b & 0x80 == 0) return res;
         }
@@ -325,6 +327,14 @@ fn expectVarintRoundTrip(bytes: []const u8, v: u64) !void {
 
 test "unsigned_varint rejects over-long input" {
     const buf = [_]u8{0xff} ** 11;
+    var r = Io.Reader.fixed(&buf);
+    try testing.expectError(error.ProtocolError, reader.unsigned_varint(&r));
+}
+
+test "unsigned_varint rejects 10th-byte payload overflow" {
+    // Nine continuation bytes followed by a 10th byte whose payload (0x02)
+    // does not fit in the single remaining bit of a u64.
+    const buf = [_]u8{ 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x02 };
     var r = Io.Reader.fixed(&buf);
     try testing.expectError(error.ProtocolError, reader.unsigned_varint(&r));
 }
