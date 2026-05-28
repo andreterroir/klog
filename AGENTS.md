@@ -40,7 +40,7 @@ here wrong, the change is incomplete until this file matches.
 
 ## Pull requests
 
-If later commits change a PR's scope, update its title and description to
+If later commits invalidate the PR's title or description, update them to
 match the final diff before asking for review.
 
 <!--
