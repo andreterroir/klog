@@ -31,6 +31,13 @@ Sources live at the repo root, not under `src/`:
   `test` blocks. Only `protocol.zig` is wired into the `test` step today;
   add new test sources to `build.zig` when you create them.
 
+## Keeping this file current
+
+Update `AGENTS.md` in the same change that alters anything it describes:
+build or test commands, the file layout, module names exposed via
+`build.zig`, or the conventions section. If a change makes a statement
+here wrong, the change is incomplete until this file matches.
+
 <!--
 Suggested additions once the project grows past proof-of-concept (useful
 for agents as well as humans, so worth promoting into this file):
