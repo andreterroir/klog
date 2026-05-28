@@ -202,12 +202,12 @@ pub const reader = struct {
     fn unsigned_varint(r: *Io.Reader) !u64 {
         var res: u64 = 0;
         var i: usize = 0;
-        while (true) : (i += 1) {
+        while (i < 10) : (i += 1) {
             const b = try r.takeByte();
             res |= @as(u64, b & 0x7f) << @intCast(7 * i);
-            if (b & 0x80 == 0) break;
+            if (b & 0x80 == 0) return res;
         }
-        return res;
+        return Error.ProtocolError;
     }
 };
 
@@ -321,6 +321,12 @@ test "unsigned_varint multi-byte values" {
 fn expectVarintRoundTrip(bytes: []const u8, v: u64) !void {
     var r = Io.Reader.fixed(bytes);
     try testing.expectEqual(v, try reader.unsigned_varint(&r));
+}
+
+test "unsigned_varint rejects over-long input" {
+    const buf = [_]u8{0xff} ** 11;
+    var r = Io.Reader.fixed(&buf);
+    try testing.expectError(error.ProtocolError, reader.unsigned_varint(&r));
 }
 
 test "nullable_str round-trip non-null" {
