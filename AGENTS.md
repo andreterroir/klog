@@ -2,9 +2,11 @@
 
 ## Setup
 
-Requires Zig **0.16.0** or newer. The 0.16 `std.Io` API is recent and
-differs significantly from 0.15 — verify symbols against the installed
-stdlib rather than older examples.
+If `zig` is not on `PATH`, run `./scripts/install-zig.sh` before building.
+The script reads the required version from `build.zig.zon` (the single
+source of truth) and prints a `PATH` line to source. The `std.Io` API is
+still churning across Zig releases — verify symbols against the stdlib
+shipped with the installed version rather than older examples.
 
 ## Build & test
 
@@ -13,7 +15,7 @@ zig build              # build server (klog) and example client
 zig build test         # run unit tests (currently: protocol.zig tests)
 ```
 
-CI runs `zig build test --summary all` on Zig 0.16.0.
+CI runs `zig build test --summary all`.
 
 ## Layout
 
