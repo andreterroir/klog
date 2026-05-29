@@ -284,16 +284,8 @@ test "readInt" {
 }
 
 test "unsigned_varint" {
-
-    try expectVarintBytesEqual(1, 0b1);
-    try expectVarintBytesEqual(150, 0b00000001_10010110);
-}
-
-fn expectVarintBytesEqual(v: u64, bytes: u80) !void {
-    var buf: [10]u8 = undefined;
-    std.mem.writeInt(u80, &buf, bytes, std.builtin.Endian.little);
-    var r = Io.Reader.fixed(&buf);
-    try testing.expectEqual(v, try reader.unsigned_varint(&r));
+    try expectVarintBytes(&[_]u8{0x01}, 1);
+    try expectVarintBytes(&[_]u8{ 0x96, 0x01 }, 150);
 }
 
 test "unsigned_varint stops at varint boundary" {
