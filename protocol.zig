@@ -398,6 +398,16 @@ test "nullable_str round-trip empty string" {
     try testing.expectEqualStrings("", read.?);
 }
 
+test "nullable_str rejects too-small buffer" {
+    var buf: [16]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    try writer.nullable_str(&w, "test-client");
+
+    var out: [4]u8 = undefined;
+    var r = Io.Reader.fixed(&buf);
+    try testing.expectError(error.BufferTooSmall, reader.nullable_str(&r, &out));
+}
+
 test "compact_nullable_str round-trip" {
     var buf: [64]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
