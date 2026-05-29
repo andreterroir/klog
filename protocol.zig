@@ -198,6 +198,7 @@ pub const reader = struct {
         return null;
     }
 
+    /// Unsigned LEB128, as used by Protocol Buffers.
     /// https://protobuf.dev/programming-guides/encoding/#varints
     fn unsigned_varint(r: *Io.Reader) !u64 {
         var res: u64 = 0;
@@ -290,6 +291,7 @@ test "unsigned_varint" {
     try expectVarintBytes(&[_]u8{0x7f}, 127);
     // smallest 2-byte varint
     try expectVarintBytes(&[_]u8{ 0x80, 0x01 }, 128);
+    // worked example from the protobuf docs
     try expectVarintBytes(&[_]u8{ 0x96, 0x01 }, 150);
     // largest 2-byte varint
     try expectVarintBytes(&[_]u8{ 0xff, 0x7f }, 16383);
