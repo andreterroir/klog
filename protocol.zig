@@ -29,24 +29,17 @@ pub const RequestHeader = struct {
 //  correlation_id => INT32
 pub const ResponseHeader = struct {};
 
-/// Represents the fixed part of Produce API request.
+/// Represents the fixed part of the Produce API request.
 ///
 /// Produce Request (Version: 13) => { transactional_id acks timeout_ms (topic_data) }
 ///   transactional_id => COMPACT_NULLABLE_STRING
 ///   acks => INT16
 ///   timeout_ms => INT32
-///   topic_data => { topic_id (partition_data) }
-///     topic_id => UUID
-///     partition_data => { index records }
-///       index => INT32
-///       records => COMPACT_NULLABLE_RECORDS
+/// The trailing topic_data array is read separately and not part of this struct.
 pub const ProduceRequest = struct {
     transactional_id: ?[]const u8,
     acks: i16,
     timeout_ms: i32,
-    // TODO implement UUID type
-    topic_id: [16]u8 = undefined,
-    partition_index: i32,
 };
 
 /// Produce Response (Version: 12) => [responses] throttle_time_ms node_endpoints]<tag: 0>
@@ -155,17 +148,13 @@ pub const reader = struct {
         };
     }
 
-    /// buf has to be large enough to hold transactional_id
+    /// buf has to be large enough to hold transactional_id.
     pub fn produce_req(r: *Io.Reader, buf: []u8) !ProduceRequest {
-        var req = ProduceRequest{
+        return .{
             .transactional_id = try compact_nullable_str(r, buf),
             .acks = try r.takeInt(i16, BE),
             .timeout_ms = try r.takeInt(i32, BE),
-            .partition_index = try r.takeInt(i32, BE),
         };
-        // FIXME must be read before partition index
-        try r.readSliceAll(&req.topic_id);
-        return req;
     }
 
     fn api_key(r: *Io.Reader) !ApiKey {
@@ -233,8 +222,6 @@ pub const writer = struct {
         try compact_nullable_str(w, req.transactional_id);
         try w.writeInt(i16, req.acks, BE);
         try w.writeInt(i32, req.timeout_ms, BE);
-        try w.writeAll(&req.topic_id);
-        try w.writeInt(i32, req.partition_index, BE);
     }
 
     fn nullable_str(w: *Io.Writer, str: ?[]const u8) !void {
@@ -503,10 +490,57 @@ test "req_header round-trip with unsupported api_key" {
     }
 }
 
-test "produce request" {
-    // XXX
+test "produce_req round-trip with transactional_id" {
+    var buf: [64]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    const written = ProduceRequest{
+        .transactional_id = "txn-42",
+        .acks = -1,
+        .timeout_ms = 30_000,
+    };
+    try writer.produce_req(&w, written);
+
+    var out: [64]u8 = undefined;
+    var r = Io.Reader.fixed(&buf);
+    const read = try reader.produce_req(&r, &out);
+    try testing.expect(read.transactional_id != null);
+    try testing.expectEqualStrings("txn-42", read.transactional_id.?);
+    try testing.expectEqual(written.acks, read.acks);
+    try testing.expectEqual(written.timeout_ms, read.timeout_ms);
 }
 
-test "produce request without transactional_id" {
-    // XXX
+test "produce_req round-trip without transactional_id" {
+    var buf: [16]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    const written = ProduceRequest{
+        .transactional_id = null,
+        .acks = 0,
+        .timeout_ms = 0,
+    };
+    try writer.produce_req(&w, written);
+
+    var out: [16]u8 = undefined;
+    var r = Io.Reader.fixed(&buf);
+    const read = try reader.produce_req(&r, &out);
+    try testing.expect(read.transactional_id == null);
+    try testing.expectEqual(written.acks, read.acks);
+    try testing.expectEqual(written.timeout_ms, read.timeout_ms);
+}
+
+test "produce_req round-trip acks=1" {
+    var buf: [16]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    const written = ProduceRequest{
+        .transactional_id = null,
+        .acks = 1,
+        .timeout_ms = 5_000,
+    };
+    try writer.produce_req(&w, written);
+
+    var out: [16]u8 = undefined;
+    var r = Io.Reader.fixed(&buf);
+    const read = try reader.produce_req(&r, &out);
+    try testing.expect(read.transactional_id == null);
+    try testing.expectEqual(written.acks, read.acks);
+    try testing.expectEqual(written.timeout_ms, read.timeout_ms);
 }
