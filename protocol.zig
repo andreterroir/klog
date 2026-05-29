@@ -306,7 +306,14 @@ test "unsigned_varint" {
         &[_]u8{ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01 },
         std.math.maxInt(u64),
     );
+}
 
+fn expectVarintBytes(bytes: []const u8, v: u64) !void {
+    var r = Io.Reader.fixed(bytes);
+    try testing.expectEqual(v, try reader.unsigned_varint(&r));
+}
+
+test "unsigned_varint stops at varint boundary" {
     // Bytes following the varint must not be consumed even when their
     // continuation bit is set.
     const buf = [_]u8{ 0x96, 0x01, 0xff, 0xff };
@@ -314,11 +321,6 @@ test "unsigned_varint" {
     try testing.expectEqual(@as(u64, 150), try reader.unsigned_varint(&r));
     try testing.expectEqual(@as(u8, 0xff), try r.takeByte());
     try testing.expectEqual(@as(u8, 0xff), try r.takeByte());
-}
-
-fn expectVarintBytes(bytes: []const u8, v: u64) !void {
-    var r = Io.Reader.fixed(bytes);
-    try testing.expectEqual(v, try reader.unsigned_varint(&r));
 }
 
 test "unsigned_varint rejects over-long input" {
