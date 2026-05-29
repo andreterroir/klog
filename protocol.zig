@@ -198,15 +198,19 @@ pub const reader = struct {
         return null;
     }
 
+    /// Unsigned LEB128, as used by Protocol Buffers.
     /// https://protobuf.dev/programming-guides/encoding/#varints
     fn unsigned_varint(r: *Io.Reader) !u64 {
         var res: u64 = 0;
         var i: usize = 0;
-        while (true) : (i += 1) {
-            const b_signed = try r.takeByte();
-            res |= (b_signed & 0x7f) << @intCast(7 * i);
-            if (b_signed & 0x80 == 0) break;
+        var b: u8 = 0;
+        while (i < 10) : (i += 1) {
+            b = try r.takeByte();
+            res |= @as(u64, b & 0x7f) << @intCast(7 * i);
+            if (b & 0x80 == 0) break;
         }
+        // Reject over-long input and 10th-byte payloads that don't fit in u64.
+        if (b & 0x80 != 0 or (i == 9 and b & 0x7f > 1)) return Error.ProtocolError;
         return res;
     }
 };
@@ -281,16 +285,56 @@ test "readInt" {
 }
 
 test "unsigned_varint" {
-
-    try expectVarintBytesEqual(1, 0b1);
-    try expectVarintBytesEqual(150, 0b00000001_10010110);
+    try expectVarintBytes(&[_]u8{0x00}, 0);
+    try expectVarintBytes(&[_]u8{0x01}, 1);
+    // largest 1-byte varint
+    try expectVarintBytes(&[_]u8{0x7f}, 127);
+    // smallest 2-byte varint
+    try expectVarintBytes(&[_]u8{ 0x80, 0x01 }, 128);
+    // worked example from the protobuf docs
+    try expectVarintBytes(&[_]u8{ 0x96, 0x01 }, 150);
+    // largest 2-byte varint
+    try expectVarintBytes(&[_]u8{ 0xff, 0x7f }, 16383);
+    // smallest 3-byte varint
+    try expectVarintBytes(&[_]u8{ 0x80, 0x80, 0x01 }, 16384);
+    try expectVarintBytes(
+        &[_]u8{ 0xff, 0xff, 0xff, 0xff, 0x0f },
+        std.math.maxInt(u32),
+    );
+    // largest u64; uses the full 10-byte encoding
+    try expectVarintBytes(
+        &[_]u8{ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01 },
+        std.math.maxInt(u64),
+    );
 }
 
-fn expectVarintBytesEqual(v: u64, bytes: u80) !void {
-    var buf: [10]u8 = undefined;
-    std.mem.writeInt(u80, &buf, bytes, std.builtin.Endian.little);
-    var r = Io.Reader.fixed(&buf);
+fn expectVarintBytes(bytes: []const u8, v: u64) !void {
+    var r = Io.Reader.fixed(bytes);
     try testing.expectEqual(v, try reader.unsigned_varint(&r));
+}
+
+test "unsigned_varint stops at varint boundary" {
+    // Bytes following the varint must not be consumed even when their
+    // continuation bit is set.
+    const buf = [_]u8{ 0x96, 0x01, 0xff, 0xff };
+    var r = Io.Reader.fixed(&buf);
+    try testing.expectEqual(@as(u64, 150), try reader.unsigned_varint(&r));
+    try testing.expectEqual(@as(u8, 0xff), try r.takeByte());
+    try testing.expectEqual(@as(u8, 0xff), try r.takeByte());
+}
+
+test "unsigned_varint rejects over-long input" {
+    const buf = [_]u8{0xff} ** 11;
+    var r = Io.Reader.fixed(&buf);
+    try testing.expectError(error.ProtocolError, reader.unsigned_varint(&r));
+}
+
+test "unsigned_varint rejects 10th-byte payload overflow" {
+    // Nine continuation bytes followed by a 10th byte whose payload (0x02)
+    // does not fit in the single remaining bit of a u64.
+    const buf = [_]u8{ 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x02 };
+    var r = Io.Reader.fixed(&buf);
+    try testing.expectError(error.ProtocolError, reader.unsigned_varint(&r));
 }
 
 test "nullable_str round-trip non-null" {
