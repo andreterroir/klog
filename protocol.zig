@@ -284,6 +284,7 @@ test "readInt" {
 }
 
 test "unsigned_varint" {
+    try expectVarintBytes(&[_]u8{0x00}, 0);
     try expectVarintBytes(&[_]u8{0x01}, 1);
     try expectVarintBytes(&[_]u8{0x7f}, 127);
     try expectVarintBytes(&[_]u8{ 0x80, 0x01 }, 128);
