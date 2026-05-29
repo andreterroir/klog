@@ -7,7 +7,8 @@ A Kafka-protocol compatible log server and a Zig client.
 
 ## Requirements
 
-[Zig](https://ziglang.org/download/) **0.16.0** or newer.
+[Zig](https://ziglang.org/download/) — see `minimum_zig_version` in
+[`build.zig.zon`](build.zig.zon) for the required version.
 
 To install the required version automatically (local dev or non-GitHub CI):
 
