@@ -44,16 +44,3 @@ here wrong, the change is incomplete until this file matches.
 
 If later commits invalidate the PR's title or description, update them to
 match the final diff before asking for review.
-
-<!--
-Suggested additions once the project grows past proof-of-concept (useful
-for agents as well as humans, so worth promoting into this file):
-
-- Architecture overview: request lifecycle from accept → header parse →
-  API dispatch, and where state will live once persistence exists.
-- Supported Kafka APIs and versions, with a pointer to the spec sections
-  each one implements.
-- Error-handling and allocator conventions (who owns buffers, when to
-  use fixed-size stack buffers vs. an allocator).
-- Logging conventions (levels, what belongs at `debug` vs `info`).
--->
