@@ -307,21 +307,21 @@ test "unsigned_varint stops at varint boundary" {
 }
 
 test "unsigned_varint multi-byte values" {
-    try expectVarintRoundTrip(&[_]u8{0x7f}, 127);
-    try expectVarintRoundTrip(&[_]u8{ 0x80, 0x01 }, 128);
-    try expectVarintRoundTrip(&[_]u8{ 0xff, 0x7f }, 16383);
-    try expectVarintRoundTrip(&[_]u8{ 0x80, 0x80, 0x01 }, 16384);
-    try expectVarintRoundTrip(
+    try expectVarintBytes(&[_]u8{0x7f}, 127);
+    try expectVarintBytes(&[_]u8{ 0x80, 0x01 }, 128);
+    try expectVarintBytes(&[_]u8{ 0xff, 0x7f }, 16383);
+    try expectVarintBytes(&[_]u8{ 0x80, 0x80, 0x01 }, 16384);
+    try expectVarintBytes(
         &[_]u8{ 0xff, 0xff, 0xff, 0xff, 0x0f },
         std.math.maxInt(u32),
     );
-    try expectVarintRoundTrip(
+    try expectVarintBytes(
         &[_]u8{ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01 },
         std.math.maxInt(u64),
     );
 }
 
-fn expectVarintRoundTrip(bytes: []const u8, v: u64) !void {
+fn expectVarintBytes(bytes: []const u8, v: u64) !void {
     var r = Io.Reader.fixed(bytes);
     try testing.expectEqual(v, try reader.unsigned_varint(&r));
 }
