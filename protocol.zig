@@ -202,14 +202,15 @@ pub const reader = struct {
     fn unsigned_varint(r: *Io.Reader) !u64 {
         var res: u64 = 0;
         var i: usize = 0;
+        var b: u8 = 0;
         while (i < 10) : (i += 1) {
-            const b = try r.takeByte();
-            // Only one bit of payload fits in the 10th byte of a u64 LEB128.
-            if (i == 9 and b & 0x7f > 1) return Error.ProtocolError;
+            b = try r.takeByte();
             res |= @as(u64, b & 0x7f) << @intCast(7 * i);
-            if (b & 0x80 == 0) return res;
+            if (b & 0x80 == 0) break;
         }
-        return Error.ProtocolError;
+        // Reject over-long input and 10th-byte payloads that don't fit in u64.
+        if (b & 0x80 != 0 or (i == 9 and b & 0x7f > 1)) return Error.ProtocolError;
+        return res;
     }
 };
 
