@@ -286,15 +286,20 @@ test "readInt" {
 test "unsigned_varint" {
     try expectVarintBytes(&[_]u8{0x00}, 0);
     try expectVarintBytes(&[_]u8{0x01}, 1);
+    // largest 1-byte varint
     try expectVarintBytes(&[_]u8{0x7f}, 127);
+    // smallest 2-byte varint
     try expectVarintBytes(&[_]u8{ 0x80, 0x01 }, 128);
     try expectVarintBytes(&[_]u8{ 0x96, 0x01 }, 150);
+    // largest 2-byte varint
     try expectVarintBytes(&[_]u8{ 0xff, 0x7f }, 16383);
+    // smallest 3-byte varint
     try expectVarintBytes(&[_]u8{ 0x80, 0x80, 0x01 }, 16384);
     try expectVarintBytes(
         &[_]u8{ 0xff, 0xff, 0xff, 0xff, 0x0f },
         std.math.maxInt(u32),
     );
+    // largest u64; uses the full 10-byte encoding
     try expectVarintBytes(
         &[_]u8{ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01 },
         std.math.maxInt(u64),
