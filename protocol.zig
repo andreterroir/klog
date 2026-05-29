@@ -194,11 +194,10 @@ pub const reader = struct {
     fn compact_nullable_str(r: *Io.Reader, buf: []u8) !?[]u8 {
         const len = try unsigned_varint(r);
         if (len == 0) return null;
-        const n = len - 1;
+        const n: usize = @intCast(len - 1);
         if (n > buf.len) return Error.BufferTooSmall;
-        const l: usize = @intCast(n);
-        try r.readSliceAll(buf[0..l]);
-        return buf[0..l];
+        try r.readSliceAll(buf[0..n]);
+        return buf[0..n];
     }
 
     /// Unsigned LEB128, as used by Protocol Buffers.
@@ -261,13 +260,10 @@ pub const writer = struct {
     /// https://protobuf.dev/programming-guides/encoding/#varints
     fn unsigned_varint(w: *Io.Writer, v: u64) !void {
         var n = v;
-        while (true) {
-            var b: u8 = @intCast(n & 0x7f);
-            n >>= 7;
-            if (n != 0) b |= 0x80;
-            try w.writeByte(b);
-            if (n == 0) break;
+        while (n >= 0x80) : (n >>= 7) {
+            try w.writeByte(@as(u8, @intCast(n & 0x7f)) | 0x80);
         }
+        try w.writeByte(@intCast(n));
     }
 };
 
