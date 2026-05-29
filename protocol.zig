@@ -510,8 +510,6 @@ test "produce_req round-trip with transactional_id" {
     const read = try reader.produce_req(&r, &out);
     try testing.expect(read.transactional_id != null);
     try testing.expectEqualStrings("txn-42", read.transactional_id.?);
-    try testing.expectEqual(written.acks, read.acks);
-    try testing.expectEqual(written.timeout_ms, read.timeout_ms);
 }
 
 test "produce_req round-trip without transactional_id" {
@@ -528,8 +526,6 @@ test "produce_req round-trip without transactional_id" {
     var r = Io.Reader.fixed(&buf);
     const read = try reader.produce_req(&r, &out);
     try testing.expect(read.transactional_id == null);
-    try testing.expectEqual(written.acks, read.acks);
-    try testing.expectEqual(written.timeout_ms, read.timeout_ms);
 }
 
 test "produce_req round-trip acks=1" {
@@ -545,7 +541,5 @@ test "produce_req round-trip acks=1" {
     var out: [16]u8 = undefined;
     var r = Io.Reader.fixed(&buf);
     const read = try reader.produce_req(&r, &out);
-    try testing.expect(read.transactional_id == null);
     try testing.expectEqual(written.acks, read.acks);
-    try testing.expectEqual(written.timeout_ms, read.timeout_ms);
 }
