@@ -285,22 +285,9 @@ test "readInt" {
 
 test "unsigned_varint" {
     try expectVarintBytes(&[_]u8{0x01}, 1);
-    try expectVarintBytes(&[_]u8{ 0x96, 0x01 }, 150);
-}
-
-test "unsigned_varint stops at varint boundary" {
-    // 150 encodes as 0x96 0x01; the parser must not consume the trailing
-    // bytes even when their continuation bit is set.
-    const buf = [_]u8{ 0x96, 0x01, 0xff, 0xff };
-    var r = Io.Reader.fixed(&buf);
-    try testing.expectEqual(@as(u64, 150), try reader.unsigned_varint(&r));
-    try testing.expectEqual(@as(u8, 0xff), try r.takeByte());
-    try testing.expectEqual(@as(u8, 0xff), try r.takeByte());
-}
-
-test "unsigned_varint multi-byte values" {
     try expectVarintBytes(&[_]u8{0x7f}, 127);
     try expectVarintBytes(&[_]u8{ 0x80, 0x01 }, 128);
+    try expectVarintBytes(&[_]u8{ 0x96, 0x01 }, 150);
     try expectVarintBytes(&[_]u8{ 0xff, 0x7f }, 16383);
     try expectVarintBytes(&[_]u8{ 0x80, 0x80, 0x01 }, 16384);
     try expectVarintBytes(
@@ -311,6 +298,14 @@ test "unsigned_varint multi-byte values" {
         &[_]u8{ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01 },
         std.math.maxInt(u64),
     );
+
+    // Bytes following the varint must not be consumed even when their
+    // continuation bit is set.
+    const buf = [_]u8{ 0x96, 0x01, 0xff, 0xff };
+    var r = Io.Reader.fixed(&buf);
+    try testing.expectEqual(@as(u64, 150), try reader.unsigned_varint(&r));
+    try testing.expectEqual(@as(u8, 0xff), try r.takeByte());
+    try testing.expectEqual(@as(u8, 0xff), try r.takeByte());
 }
 
 fn expectVarintBytes(bytes: []const u8, v: u64) !void {
