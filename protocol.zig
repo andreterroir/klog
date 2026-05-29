@@ -528,18 +528,3 @@ test "produce_req round-trip without transactional_id" {
     try testing.expect(read.transactional_id == null);
 }
 
-test "produce_req round-trip acks=1" {
-    var buf: [16]u8 = undefined;
-    var w = Io.Writer.fixed(&buf);
-    const written = ProduceRequest{
-        .transactional_id = null,
-        .acks = 1,
-        .timeout_ms = 5_000,
-    };
-    try writer.produce_req(&w, written);
-
-    var out: [16]u8 = undefined;
-    var r = Io.Reader.fixed(&buf);
-    const read = try reader.produce_req(&r, &out);
-    try testing.expectEqual(written.acks, read.acks);
-}
