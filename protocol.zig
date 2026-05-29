@@ -192,10 +192,13 @@ pub const reader = struct {
     //bytes follow which are the UTF-8 encoding of the character
     //sequence. A null string is represented with a length of 0.
     fn compact_nullable_str(r: *Io.Reader, buf: []u8) !?[]u8 {
-        // XXX
-        _ = r;
-        _ = buf;
-        return null;
+        const len = try unsigned_varint(r);
+        if (len == 0) return null;
+        const n = len - 1;
+        if (n > buf.len) return Error.BufferTooSmall;
+        const l: usize = @intCast(n);
+        try r.readSliceAll(buf[0..l]);
+        return buf[0..l];
     }
 
     /// Unsigned LEB128, as used by Protocol Buffers.
@@ -246,15 +249,25 @@ pub const writer = struct {
     }
 
     fn compact_nullable_str(w: *Io.Writer, str: ?[]const u8) !void {
-        // XXX
-        _ = w;
-        _ = str;
+        if (str) |s| {
+            try unsigned_varint(w, @as(u64, s.len) + 1);
+            try w.writeAll(s);
+        } else {
+            try unsigned_varint(w, 0);
+        }
     }
 
+    /// Unsigned LEB128, as used by Protocol Buffers.
+    /// https://protobuf.dev/programming-guides/encoding/#varints
     fn unsigned_varint(w: *Io.Writer, v: u64) !void {
-        // XXX
-        _ = w;
-        _ = v;
+        var n = v;
+        while (true) {
+            var b: u8 = @intCast(n & 0x7f);
+            n >>= 7;
+            if (n != 0) b |= 0x80;
+            try w.writeByte(b);
+            if (n == 0) break;
+        }
     }
 };
 
@@ -311,6 +324,31 @@ test "unsigned_varint" {
 fn expectVarintBytes(bytes: []const u8, v: u64) !void {
     var r = Io.Reader.fixed(bytes);
     try testing.expectEqual(v, try reader.unsigned_varint(&r));
+}
+
+test "unsigned_varint write" {
+    try expectVarintWritten(0, &[_]u8{0x00});
+    try expectVarintWritten(1, &[_]u8{0x01});
+    try expectVarintWritten(127, &[_]u8{0x7f});
+    try expectVarintWritten(128, &[_]u8{ 0x80, 0x01 });
+    try expectVarintWritten(150, &[_]u8{ 0x96, 0x01 });
+    try expectVarintWritten(16383, &[_]u8{ 0xff, 0x7f });
+    try expectVarintWritten(16384, &[_]u8{ 0x80, 0x80, 0x01 });
+    try expectVarintWritten(
+        std.math.maxInt(u32),
+        &[_]u8{ 0xff, 0xff, 0xff, 0xff, 0x0f },
+    );
+    try expectVarintWritten(
+        std.math.maxInt(u64),
+        &[_]u8{ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01 },
+    );
+}
+
+fn expectVarintWritten(v: u64, bytes: []const u8) !void {
+    var buf: [10]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    try writer.unsigned_varint(&w, v);
+    try testing.expectEqualSlices(u8, bytes, w.buffered());
 }
 
 test "unsigned_varint stops at varint boundary" {
@@ -372,11 +410,50 @@ test "nullable_str round-trip empty string" {
     try testing.expectEqualStrings("", read.?);
 }
 
-test "compact_nullable_str round-trip" {}
+test "compact_nullable_str round-trip" {
+    var buf: [64]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    try writer.compact_nullable_str(&w, "test-client");
 
-test "compact_nullable_str round-trip null" {}
+    var out: [64]u8 = undefined;
+    var r = Io.Reader.fixed(&buf);
+    const read = try reader.compact_nullable_str(&r, &out);
+    try testing.expect(read != null);
+    try testing.expectEqualStrings("test-client", read.?);
+}
 
-test "compact_nullable_str round-trip empty string" {}
+test "compact_nullable_str round-trip null" {
+    var buf: [16]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    try writer.compact_nullable_str(&w, null);
+
+    var out: [16]u8 = undefined;
+    var r = Io.Reader.fixed(&buf);
+    const read = try reader.compact_nullable_str(&r, &out);
+    try testing.expect(read == null);
+}
+
+test "compact_nullable_str round-trip empty string" {
+    var buf: [16]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    try writer.compact_nullable_str(&w, "");
+
+    var out: [16]u8 = undefined;
+    var r = Io.Reader.fixed(&buf);
+    const read = try reader.compact_nullable_str(&r, &out);
+    try testing.expect(read != null);
+    try testing.expectEqualStrings("", read.?);
+}
+
+test "compact_nullable_str rejects too-small buffer" {
+    var buf: [16]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    try writer.compact_nullable_str(&w, "test-client");
+
+    var out: [4]u8 = undefined;
+    var r = Io.Reader.fixed(&buf);
+    try testing.expectError(error.BufferTooSmall, reader.compact_nullable_str(&r, &out));
+}
 
 test "req_header round-trip with client_id" {
     var buf: [64]u8 = undefined;
