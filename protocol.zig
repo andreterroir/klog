@@ -30,12 +30,17 @@ pub const RequestHeader = struct {
 pub const ResponseHeader = struct {};
 
 /// Represents the fixed part of the Produce API request.
+/// The trailing topic_data array is read separately and not part of this struct.
 ///
 /// Produce Request (Version: 13) => { transactional_id acks timeout_ms (topic_data) }
 ///   transactional_id => COMPACT_NULLABLE_STRING
 ///   acks => INT16
 ///   timeout_ms => INT32
-/// The trailing topic_data array is read separately and not part of this struct.
+///   topic_data => { topic_id (partition_data) }
+///     topic_id => UUID
+///     partition_data => { index records }
+///       index => INT32
+///       records => COMPACT_NULLABLE_RECORDS
 pub const ProduceRequest = struct {
     transactional_id: ?[]const u8,
     acks: i16,
