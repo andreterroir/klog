@@ -193,7 +193,7 @@ pub const reader = struct {
             .transactional_id = try compact_nullable_str(r, buf),
             .acks = try r.takeInt(i16, BE),
             .timeout_ms = try r.takeInt(i32, BE),
-            .topic_data_size = try compact_arr_size(r),
+            .topic_data_size = try compact_size(r),
         };
     }
 
@@ -225,14 +225,11 @@ pub const reader = struct {
         return buf[0..n];
     }
 
-    /// Represents a sequence of objects of a given
-    /// type T. Type T can be either a primitive type
-    /// (e.g. STRING) or a structure. First, the length N
-    /// + 1 is given as an UNSIGNED_VARINT. Then N
-    /// instances of type T follow. In protocol
-    /// documentation a compact array of T instances
-    /// is referred to as (T).
-    fn compact_arr_size(r: *Io.Reader) !u64 {
+    /// Reads the length N from a COMPACT array, encoded as N + 1 in an
+    /// UNSIGNED_VARINT. The same length-prefix scheme is used for compact
+    /// byte sequences (e.g. records), so this applies to both. In protocol
+    /// documentation a compact array of T instances is referred to as (T).
+    fn compact_size(r: *Io.Reader) !u64 {
         return try unsigned_varint(r) - 1;
     }
 
@@ -275,14 +272,14 @@ pub const writer = struct {
     /// Writes a COMPACT array of partition_data: the element count as a
     /// compact array size, followed by each { index records } entry.
     fn partition_data(w: *Io.Writer, arr: []const PartitionData) !void {
-        try compact_arr_size(w, arr.len);
+        try compact_size(w, arr.len);
         for (arr) |partition| {
             try w.writeInt(i32, partition.index, BE);
             if (partition.records) |records| {
-                try compact_arr_size(w, records.len);
+                try compact_size(w, records.len);
                 try w.writeAll(records);
             } else {
-                try compact_arr_size(w, null);
+                try compact_size(w, null);
             }
         }
     }
@@ -306,10 +303,10 @@ pub const writer = struct {
         }
     }
 
-    /// Writes a COMPACT array size: length N+1 as an unsigned varint, or 0
-    /// for a null array. Also the length prefix for COMPACT_NULLABLE_RECORDS,
-    /// where the N raw record-batch bytes follow.
-    fn compact_arr_size(w: *Io.Writer, size: ?u64) !void {
+    /// Writes a compact length N as N+1 in an unsigned varint, or 0 for a
+    /// null array/sequence. Used for both COMPACT arrays and compact byte
+    /// sequences like COMPACT_NULLABLE_RECORDS, where the N bytes follow.
+    fn compact_size(w: *Io.Writer, size: ?u64) !void {
         if (size) |s| {
             try unsigned_varint(w, s + 1);
         } else {
@@ -566,21 +563,21 @@ test "compact_nullable_str rejects too-small buffer" {
     try testing.expectError(error.BufferTooSmall, reader.compact_nullable_str(&r, &out));
 }
 
-test "compact_arr_size round-trip" {
+test "compact_size round-trip" {
     var buf: [16]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
 
     const size: u64 = 7;
-    try writer.compact_arr_size(&w, size);
+    try writer.compact_size(&w, size);
 
     var r = Io.Reader.fixed(&buf);
-    try testing.expectEqual(size, try reader.compact_arr_size(&r));
+    try testing.expectEqual(size, try reader.compact_size(&r));
 }
 
-test "compact_arr_size encodes null as zero" {
+test "compact_size encodes null as zero" {
     var buf: [16]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
-    try writer.compact_arr_size(&w, null);
+    try writer.compact_size(&w, null);
     try testing.expectEqualSlices(u8, &[_]u8{0x00}, w.buffered());
 }
 
