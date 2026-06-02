@@ -40,7 +40,7 @@ pub fn main(init: std.process.Init) !void {
             .topic_id = topic2_uuid,
             .partition_data = &.{
                 .{ .index = 0, .records = &[_]u8{ 0xde, 0xad, 0xbe, 0xef } },
-                .{ .index = 1, .records = &[_]u8{ 0x01, 0x02, 0x03 } },
+                .{ .index = 1, .records = &[_]u8{ 0xfe, 0xed, 0xfa, 0xce } },
             },
         },
     };
