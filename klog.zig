@@ -75,7 +75,7 @@ fn produce(io: Io, io_reader: *Io.Reader, stream: Io.net.Stream) !void {
 /// fixed-size chunks so an arbitrarily large records blob never has to be
 /// held in memory at once. Logs the byte count and a short hex preview of
 /// the first chunk.
-fn log_records(io_reader: *Io.Reader, partition: proto.Partition) !void {
+fn log_records(io_reader: *Io.Reader, partition: proto.PartitionData) !void {
     const size = partition.records_size orelse {
         log.info("  partition {d}: null records", .{partition.index});
         return;

@@ -64,7 +64,7 @@ pub const ProduceRequest = struct {
 ///
 /// topic_id => UUID
 /// partition_data => { index records }
-pub const Topic = struct {
+pub const TopicData = struct {
     topic_id: [16]u8, // UUID
     /// The number of partition_data entries that follow.
     partition_count: u64,
@@ -77,7 +77,7 @@ pub const Topic = struct {
 ///
 /// index => INT32
 /// records => COMPACT_NULLABLE_RECORDS
-pub const Partition = struct {
+pub const PartitionData = struct {
     index: i32,
     records_size: ?u64,
 };
@@ -210,7 +210,7 @@ pub const reader = struct {
     /// by the partition_data array length. The caller then reads
     /// `partition_count` partitions with `partition_data`. There are
     /// `ProduceRequest.topic_data_size` of these entries in a request.
-    pub fn topic_data(r: *Io.Reader) !Topic {
+    pub fn topic_data(r: *Io.Reader) !TopicData {
         var topic_id: [16]u8 = undefined;
         try r.readSliceAll(&topic_id);
         return .{
@@ -223,7 +223,7 @@ pub const reader = struct {
     /// followed by the COMPACT_NULLABLE_RECORDS length. The caller then
     /// consumes `records_size` bytes of records (or none when null) before
     /// reading the next partition.
-    pub fn partition_data(r: *Io.Reader) !Partition {
+    pub fn partition_data(r: *Io.Reader) !PartitionData {
         const index = try r.takeInt(i32, BE);
         // records => COMPACT_NULLABLE_RECORDS: length N+1, or 0 for null.
         // compact_size would underflow on the 0 marker, so decode it here
@@ -311,7 +311,7 @@ pub const writer = struct {
     /// by the partition_data array length. Each of the `partition_count`
     /// partitions is then written with `partition_data`. The topic array
     /// length itself is written by `produce_req` (topic_data_size).
-    pub fn topic_data(w: *Io.Writer, topic: Topic) !void {
+    pub fn topic_data(w: *Io.Writer, topic: TopicData) !void {
         try w.writeAll(&topic.topic_id);
         try compact_size(w, topic.partition_count);
     }
@@ -321,7 +321,7 @@ pub const writer = struct {
     /// caller then writes the `records_size` record bytes itself, mirroring
     /// how `reader.partition_data` returns the size and leaves the bytes in
     /// the stream for the caller to consume.
-    pub fn partition_data(w: *Io.Writer, partition: Partition) !void {
+    pub fn partition_data(w: *Io.Writer, partition: PartitionData) !void {
         try w.writeInt(i32, partition.index, BE);
         try compact_size(w, partition.records_size);
     }
