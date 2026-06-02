@@ -58,4 +58,45 @@ fn produce(io: Io, io_reader: *Io.Reader, stream: Io.net.Stream) !void {
     var buf: [max_transactional_id]u8 = undefined;
     const req = try reader.produce_req(io_reader, &buf);
     log.debug("produce request: {}", .{req});
+
+    // Read the topic_data array one entry at a time, using the counts and
+    // sizes that prefix each level rather than buffering the whole request.
+    for (0..req.topic_data_size) |_| {
+        const topic = try reader.topic_data(io_reader);
+        log.info("topic {x}: {d} partition(s)", .{ topic.topic_id, topic.partition_count });
+        for (0..topic.partition_count) |_| {
+            const partition = try reader.partition_data(io_reader);
+            try log_records(io_reader, partition);
+        }
+    }
+}
+
+/// Logs a partition's records, consuming them from the stream in
+/// fixed-size chunks so an arbitrarily large records blob never has to be
+/// held in memory at once. Logs the byte count and a short hex preview of
+/// the first chunk.
+fn log_records(io_reader: *Io.Reader, partition: proto.Partition) !void {
+    const size = partition.records_size orelse {
+        log.info("  partition {d}: null records", .{partition.index});
+        return;
+    };
+
+    var chunk: [4096]u8 = undefined;
+    const first_len: usize = @intCast(@min(size, chunk.len));
+    try io_reader.readSliceAll(chunk[0..first_len]);
+    const preview = chunk[0..@min(first_len, 16)];
+    log.info("  partition {d}: {d} record byte(s), first {d}: {x}", .{
+        partition.index,
+        size,
+        preview.len,
+        preview,
+    });
+
+    // Drain the remaining bytes, again one chunk at a time.
+    var remaining = size - first_len;
+    while (remaining > 0) {
+        const take: usize = @intCast(@min(remaining, chunk.len));
+        try io_reader.readSliceAll(chunk[0..take]);
+        remaining -= take;
+    }
 }

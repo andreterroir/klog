@@ -28,7 +28,18 @@ pub fn main(init: std.process.Init) !void {
     const req = proto.ProduceRequest{
         .acks = -1, // ISR
         .timeout_ms = 1000,
-        .topic_data_size = 1,
+        .topic_data_size = 2,
     };
     try writer.produce_req(io_writer, req);
+
+    // Topic one: a single partition.
+    const topic_one = [_]u8{0x11} ** 16;
+    try writer.topic_data(io_writer, topic_one, 1);
+    try writer.partition_data(io_writer, .{ .index = 0, .records = &[_]u8{ 0xca, 0xfe, 0xba, 0xbe } });
+
+    // Topic two: two partitions.
+    const topic_two = [_]u8{0x22} ** 16;
+    try writer.topic_data(io_writer, topic_two, 2);
+    try writer.partition_data(io_writer, .{ .index = 0, .records = &[_]u8{ 0xde, 0xad, 0xbe, 0xef } });
+    try writer.partition_data(io_writer, .{ .index = 1, .records = &[_]u8{ 0x01, 0x02, 0x03 } });
 }

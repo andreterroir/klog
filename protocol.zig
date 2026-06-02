@@ -57,8 +57,6 @@ pub const ProduceRequest = struct {
     topic_data_size: u64,
 };
 
-// TODO consider client writing the data piece by piece instead
-
 /// topic_id => UUID
 /// partition_data => { index records }
 pub const TopicData = struct {
@@ -71,6 +69,24 @@ pub const TopicData = struct {
 pub const PartitionData = struct {
     index: i32,
     records: ?[]const u8, // ?[]Record,
+};
+
+/// The fixed part of a topic_data entry, read up front so the partitions
+/// can be streamed one at a time without buffering the whole entry. The
+/// topic array length itself lives in `ProduceRequest.topic_data_size`.
+pub const Topic = struct {
+    topic_id: [16]u8, // UUID
+    /// The number of partition_data entries that follow.
+    partition_count: u64,
+};
+
+/// The fixed part of a partition_data entry. `records_size` is the byte
+/// length of the COMPACT_NULLABLE_RECORDS that follow (null for null
+/// records); the caller consumes those bytes itself rather than buffering
+/// them here.
+pub const Partition = struct {
+    index: i32,
+    records_size: ?u64,
 };
 
 pub const Record = struct {
@@ -197,6 +213,35 @@ pub const reader = struct {
         };
     }
 
+    /// Reads one topic_data entry's fixed part: the topic_id UUID followed
+    /// by the partition_data array length. The caller then reads
+    /// `partition_count` partitions with `partition_data`. There are
+    /// `ProduceRequest.topic_data_size` of these entries in a request.
+    pub fn topic_data(r: *Io.Reader) !Topic {
+        var topic_id: [16]u8 = undefined;
+        try r.readSliceAll(&topic_id);
+        return .{
+            .topic_id = topic_id,
+            .partition_count = try compact_size(r),
+        };
+    }
+
+    /// Reads one partition_data entry's fixed part: the partition index
+    /// followed by the COMPACT_NULLABLE_RECORDS length. The caller then
+    /// consumes `records_size` bytes of records (or none when null) before
+    /// reading the next partition.
+    pub fn partition_data(r: *Io.Reader) !Partition {
+        const index = try r.takeInt(i32, BE);
+        // records => COMPACT_NULLABLE_RECORDS: length N+1, or 0 for null.
+        // compact_size would underflow on the 0 marker, so decode it here
+        // the same way compact_nullable_str handles its null length.
+        const len = try unsigned_varint(r);
+        return .{
+            .index = index,
+            .records_size = if (len == 0) null else len - 1,
+        };
+    }
+
     /// NULLABLE_STRING
     /// Represents a sequence of characters or null. For non-null strings, first the
     /// length N is given as an INT16. Then N bytes follow which are the UTF-8
@@ -269,30 +314,24 @@ pub const writer = struct {
         try unsigned_varint(w, req.topic_data_size + 1);
     }
 
-    /// Writes a COMPACT array of topic_data: the element count as a compact
-    /// array size, followed by each { topic_id (partition_data) } entry.
-    fn topic_data(w: *Io.Writer, arr: []const TopicData) !void {
-        try compact_size(w, arr.len);
-        for (arr) |topic| {
-            try w.writeAll(&topic.topic_id);
-            try partition_data(w, topic.partition_data);
-        }
+    /// Writes one topic_data entry's fixed part: the topic_id UUID followed
+    /// by the partition_data array length. Each of the `partition_count`
+    /// partitions is then written with `partition_data`. The topic array
+    /// length itself is written by `produce_req` (topic_data_size).
+    pub fn topic_data(w: *Io.Writer, topic_id: [16]u8, partition_count: u64) !void {
+        try w.writeAll(&topic_id);
+        try compact_size(w, partition_count);
     }
 
-    /// Writes a COMPACT array of partition_data: the element count as a
-    /// compact array size, followed by each { index records } entry.
-    fn partition_data(w: *Io.Writer, arr: []const PartitionData) !void {
-        try compact_size(w, arr.len);
-        for (arr) |partition| {
-            try w.writeInt(i32, partition.index, BE);
-            // records => COMPACT_NULLABLE_RECORDS: length N+1 then N bytes,
-            // or 0 for null.
-            if (partition.records) |records| {
-                try compact_size(w, records.len);
-                try w.writeAll(records);
-            } else {
-                try compact_size(w, null);
-            }
+    /// Writes one partition_data entry: the index followed by its
+    /// COMPACT_NULLABLE_RECORDS (length N+1 then N bytes, or 0 for null).
+    pub fn partition_data(w: *Io.Writer, partition: PartitionData) !void {
+        try w.writeInt(i32, partition.index, BE);
+        if (partition.records) |records| {
+            try compact_size(w, records.len);
+            try w.writeAll(records);
+        } else {
+            try compact_size(w, null);
         }
     }
 
@@ -448,67 +487,55 @@ test "produce_req round-trip without transactional_id" {
     try testing.expect(read.transactional_id == null);
 }
 
-test "topic_data writes count, ids, and partition_data" {
-    var buf: [64]u8 = undefined;
+test "topic_data round-trip" {
+    var buf: [32]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
-    const topics = [_]TopicData{
-        .{
-            .topic_id = .{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 },
-            .partition_data = &[_]PartitionData{
-                .{ .index = 1, .records = &[_]u8{ 0xde, 0xad, 0xbe } },
-                .{ .index = 2, .records = null },
-            },
-        },
-    };
-    try writer.topic_data(&w, &topics);
+    const topic_id = [16]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
+    try writer.topic_data(&w, topic_id, 2);
 
-    try testing.expectEqualSlices(u8, &[_]u8{
-        0x02, // compact array size: 1 topic (N+1)
-        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, // topic_id UUID
-        0x03, // compact array size: 2 partitions (N+1)
-        0x00, 0x00, 0x00, 0x01, // index 1
-        0x04, 0xde, 0xad, 0xbe, // records: size 3 (N+1) then the bytes
-        0x00, 0x00, 0x00, 0x02, // index 2
-        0x00, // null records
-    }, w.buffered());
+    var r = Io.Reader.fixed(&buf);
+    const read = try reader.topic_data(&r);
+    try testing.expectEqualSlices(u8, &topic_id, &read.topic_id);
+    try testing.expectEqual(@as(u64, 2), read.partition_count);
 }
 
-test "topic_data writes empty array" {
+test "topic_data round-trip with no partitions" {
+    var buf: [32]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    const topic_id = [_]u8{0xab} ** 16;
+    try writer.topic_data(&w, topic_id, 0);
+
+    var r = Io.Reader.fixed(&buf);
+    const read = try reader.topic_data(&r);
+    try testing.expectEqualSlices(u8, &topic_id, &read.topic_id);
+    try testing.expectEqual(@as(u64, 0), read.partition_count);
+}
+
+test "partition_data round-trip with records" {
     var buf: [16]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
-    const topics = [_]TopicData{};
-    try writer.topic_data(&w, &topics);
+    const records = [_]u8{ 0xde, 0xad, 0xbe };
+    try writer.partition_data(&w, .{ .index = 1, .records = &records });
 
-    // Just the compact array size for zero elements (N+1).
-    try testing.expectEqualSlices(u8, &[_]u8{0x01}, w.buffered());
+    var r = Io.Reader.fixed(&buf);
+    const read = try reader.partition_data(&r);
+    try testing.expectEqual(@as(i32, 1), read.index);
+    try testing.expectEqual(@as(?u64, records.len), read.records_size);
+    // The record bytes are left in the stream for the caller to consume.
+    var out: [3]u8 = undefined;
+    try r.readSliceAll(&out);
+    try testing.expectEqualSlices(u8, &records, &out);
 }
 
-test "partition_data writes count, indices, and records" {
-    var buf: [64]u8 = undefined;
-    var w = Io.Writer.fixed(&buf);
-    const partitions = [_]PartitionData{
-        .{ .index = 1, .records = &[_]u8{ 0xde, 0xad, 0xbe } },
-        .{ .index = 2, .records = null },
-    };
-    try writer.partition_data(&w, &partitions);
-
-    try testing.expectEqualSlices(u8, &[_]u8{
-        0x03, // compact array size: 2 partitions (N+1)
-        0x00, 0x00, 0x00, 0x01, // index 1
-        0x04, 0xde, 0xad, 0xbe, // records: size 3 (N+1) then the bytes
-        0x00, 0x00, 0x00, 0x02, // index 2
-        0x00, // null records
-    }, w.buffered());
-}
-
-test "partition_data writes empty array" {
+test "partition_data round-trip with null records" {
     var buf: [16]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
-    const partitions = [_]PartitionData{};
-    try writer.partition_data(&w, &partitions);
+    try writer.partition_data(&w, .{ .index = 2, .records = null });
 
-    // Just the compact array size for zero elements (N+1).
-    try testing.expectEqualSlices(u8, &[_]u8{0x01}, w.buffered());
+    var r = Io.Reader.fixed(&buf);
+    const read = try reader.partition_data(&r);
+    try testing.expectEqual(@as(i32, 2), read.index);
+    try testing.expectEqual(@as(?u64, null), read.records_size);
 }
 
 test "nullable_str round-trip non-null" {
