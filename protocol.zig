@@ -440,7 +440,7 @@ test "partition_data writes count, indices, and records" {
     var buf: [64]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
     const partitions = [_]PartitionData{
-        .{ .index = 1, .records = "abc" },
+        .{ .index = 1, .records = &[_]u8{ 0xde, 0xad, 0xbe } },
         .{ .index = 2, .records = null },
     };
     try writer.partition_data(&w, &partitions);
@@ -448,7 +448,7 @@ test "partition_data writes count, indices, and records" {
     try testing.expectEqualSlices(u8, &[_]u8{
         0x03, // compact array size: 2 partitions (N+1)
         0x00, 0x00, 0x00, 0x01, // index 1
-        0x04, 0x61, 0x62, 0x63, // records "abc": size 3 (N+1) then bytes
+        0x04, 0xde, 0xad, 0xbe, // records: size 3 (N+1) then the bytes
         0x00, 0x00, 0x00, 0x02, // index 2
         0x00, // null records
     }, w.buffered());
