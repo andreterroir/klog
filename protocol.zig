@@ -37,10 +37,6 @@ pub const ResponseHeader = struct {};
 ///   acks => INT16
 ///   timeout_ms => INT32
 ///   topic_data => { topic_id (partition_data) }
-///     topic_id => UUID
-///     partition_data => { index records }
-///       index => INT32
-///       records => COMPACT_NULLABLE_RECORDS
 pub const ProduceRequest = struct {
     /// The transactional ID, or null if the producer is not
     /// transactional.
@@ -51,8 +47,28 @@ pub const ProduceRequest = struct {
     acks: i16,
     /// The timeout to await a response in milliseconds.
     timeout_ms: i32,
-    /// The number of topics the request contains data for.
+    /// The number of topics a request contains data for.
     topic_data_size: u64,
+};
+
+// TODO consider client writing the data piece by piece instead
+
+/// topic_id => UUID
+/// partition_data => { index records }
+pub const TopicData = struct {
+    topic_id: [16]u8, // UUID
+    partition_data: []TopicData,
+};
+
+/// index => INT32
+/// records => COMPACT_NULLABLE_RECORDS
+pub const PartitionData = struct {
+    index: i32,
+    records: ?[]Record,
+};
+
+pub const Record = struct {
+    // XXX
 };
 
 /// Produce Response (Version: 12) => [responses] throttle_time_ms node_endpoints]<tag: 0>
