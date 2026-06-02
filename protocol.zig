@@ -384,7 +384,7 @@ test "req_header round-trip with unsupported api_key" {
     const read = try reader.api_key(&r);
     switch (read) {
         _ => {},
-        else => try std.testing.expect(false),
+        else => try testing.expect(false),
     }
 }
 
@@ -470,6 +470,17 @@ test "nullable_str rejects too-small buffer" {
     try testing.expectError(error.BufferTooSmall, reader.nullable_str(&r, &out));
 }
 
+test "nullable_str rejects negative length" {
+    // A length below -1 is not a valid null marker and must be rejected.
+    var buf: [16]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    try w.writeInt(i16, -2, BE);
+
+    var out: [16]u8 = undefined;
+    var r = Io.Reader.fixed(&buf);
+    try testing.expectError(error.ProtocolError, reader.nullable_str(&r, &out));
+}
+
 test "compact_nullable_str round-trip" {
     var buf: [64]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
@@ -526,7 +537,7 @@ test "compact_arr_size" {
     try testing.expectEqual(size, try reader.compact_arr_size(&r));
 }
 
-test "unsigned_varint" {
+test "unsigned_varint read" {
     try expectVarintBytes(&[_]u8{0x00}, 0);
     try expectVarintBytes(&[_]u8{0x01}, 1);
     // largest 1-byte varint
@@ -602,10 +613,4 @@ test "unsigned_varint rejects 10th-byte payload overflow" {
     const buf = [_]u8{ 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x02 };
     var r = Io.Reader.fixed(&buf);
     try testing.expectError(error.ProtocolError, reader.unsigned_varint(&r));
-}
-
-test "readInt" {
-    var buf = [_]u8{0} ** 8;
-    buf[0] = 1;
-    try testing.expectEqual(1, std.mem.readInt(u64, &buf, std.builtin.Endian.little));
 }
