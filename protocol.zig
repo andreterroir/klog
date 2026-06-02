@@ -374,7 +374,7 @@ test "req_header round-trip with null client_id" {
     try testing.expect(read.client_id == null);
 }
 
-test "req_header round-trip with unsupported api_key" {
+test "api_key reads unknown key" {
     var buf: [32]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
     const unsupported_api_key = 255; // not mapped in ApiKey
