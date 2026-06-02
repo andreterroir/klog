@@ -63,11 +63,10 @@ fn produce(io: Io, io_reader: *Io.Reader, stream: Io.net.Stream) !void {
     // sizes that prefix each level rather than buffering the whole request.
     for (0..req.topic_data_size) |_| {
         const topic = try reader.topic_data(io_reader);
-        log.info("topic {x}: {d} partition(s)", .{ topic.topic_id, topic.partition_count });
-        for (0..topic.partition_count) |_| {
+        log.info("topic {x}: {d} partition(s)", .{ topic.topic_id, topic.partition_data_size });
+        for (0..topic.partition_data_size) |_| {
             const partition = try reader.partition_data(io_reader);
-            const records_size = try reader.compact_size(io_reader);
-            try log_records(io_reader, partition.index, records_size);
+            try log_records(io_reader, partition.index, partition.records_size);
         }
     }
 }

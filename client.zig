@@ -40,21 +40,21 @@ pub fn main(init: std.process.Init) !void {
     const topic1_uuid = [_]u8{0x11} ** 16;
     const topic2_uuid = [_]u8{0x22} ** 16;
 
-    try writer.topic_data(io_writer, .{ .topic_id = topic1_uuid, .partition_count = 1 });
+    try writer.topic_data(io_writer, .{ .topic_id = topic1_uuid, .partition_data_size = 1 });
     try write_partition(io_writer, 0, &[_]u8{ 0xca, 0xfe, 0xba, 0xbe });
 
-    try writer.topic_data(io_writer, .{ .topic_id = topic2_uuid, .partition_count = 3 });
+    try writer.topic_data(io_writer, .{ .topic_id = topic2_uuid, .partition_data_size = 3 });
     try write_partition(io_writer, 0, null);
     try write_partition(io_writer, 1, &[_]u8{ 0xde, 0xad, 0xbe, 0xef });
     try write_partition(io_writer, 2, &[_]u8{ 0xfe, 0xed, 0xfa, 0xce });
 }
 
-/// Writes a partition_data entry: the index, then its records as a
-/// COMPACT_NULLABLE byte sequence (length prefix via compact_size, then the
-/// bytes). compact_size derives the length from the slice, so the prefix and
-/// the bytes always agree.
+/// Writes a partition_data entry: the index and records length prefix (both
+/// written by partition_data, the size taken from the slice), then the record
+/// bytes. The bytes live outside the struct, so the size and the bytes are
+/// written from the same slice and always agree.
 fn write_partition(w: *std.Io.Writer, index: i32, records: ?[]const u8) !void {
-    try proto.writer.partition_data(w, .{ .index = index });
-    try proto.writer.compact_size(w, records);
+    const records_size: ?u64 = if (records) |r| @intCast(r.len) else null;
+    try proto.writer.partition_data(w, .{ .index = index, .records_size = records_size });
     if (records) |r| try w.writeAll(r);
 }
