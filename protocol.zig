@@ -583,58 +583,37 @@ test "compact_arr_size encodes null as zero" {
     try testing.expectEqualSlices(u8, &[_]u8{0x00}, w.buffered());
 }
 
-test "unsigned_varint read" {
-    try expectVarintBytes(&[_]u8{0x00}, 0);
-    try expectVarintBytes(&[_]u8{0x01}, 1);
+test "unsigned_varint round-trip" {
+    try expectVarint(0, &[_]u8{0x00});
+    try expectVarint(1, &[_]u8{0x01});
     // largest 1-byte varint
-    try expectVarintBytes(&[_]u8{0x7f}, 127);
+    try expectVarint(127, &[_]u8{0x7f});
     // smallest 2-byte varint
-    try expectVarintBytes(&[_]u8{ 0x80, 0x01 }, 128);
+    try expectVarint(128, &[_]u8{ 0x80, 0x01 });
     // worked example from the protobuf docs
-    try expectVarintBytes(&[_]u8{ 0x96, 0x01 }, 150);
+    try expectVarint(150, &[_]u8{ 0x96, 0x01 });
     // largest 2-byte varint
-    try expectVarintBytes(&[_]u8{ 0xff, 0x7f }, 16383);
+    try expectVarint(16383, &[_]u8{ 0xff, 0x7f });
     // smallest 3-byte varint
-    try expectVarintBytes(&[_]u8{ 0x80, 0x80, 0x01 }, 16384);
-    try expectVarintBytes(
-        &[_]u8{ 0xff, 0xff, 0xff, 0xff, 0x0f },
-        std.math.maxInt(u32),
-    );
+    try expectVarint(16384, &[_]u8{ 0x80, 0x80, 0x01 });
+    try expectVarint(std.math.maxInt(u32), &[_]u8{ 0xff, 0xff, 0xff, 0xff, 0x0f });
     // largest u64; uses the full 10-byte encoding
-    try expectVarintBytes(
-        &[_]u8{ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01 },
+    try expectVarint(
         std.math.maxInt(u64),
+        &[_]u8{ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01 },
     );
 }
 
-fn expectVarintBytes(bytes: []const u8, v: u64) !void {
-    var r = Io.Reader.fixed(bytes);
+/// Asserts `encoded` decodes to `v` and that `v` re-encodes to `encoded`,
+/// pinning the exact wire bytes in both directions.
+fn expectVarint(v: u64, encoded: []const u8) !void {
+    var r = Io.Reader.fixed(encoded);
     try testing.expectEqual(v, try reader.unsigned_varint(&r));
-}
 
-test "unsigned_varint write" {
-    try expectVarintWritten(0, &[_]u8{0x00});
-    try expectVarintWritten(1, &[_]u8{0x01});
-    try expectVarintWritten(127, &[_]u8{0x7f});
-    try expectVarintWritten(128, &[_]u8{ 0x80, 0x01 });
-    try expectVarintWritten(150, &[_]u8{ 0x96, 0x01 });
-    try expectVarintWritten(16383, &[_]u8{ 0xff, 0x7f });
-    try expectVarintWritten(16384, &[_]u8{ 0x80, 0x80, 0x01 });
-    try expectVarintWritten(
-        std.math.maxInt(u32),
-        &[_]u8{ 0xff, 0xff, 0xff, 0xff, 0x0f },
-    );
-    try expectVarintWritten(
-        std.math.maxInt(u64),
-        &[_]u8{ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01 },
-    );
-}
-
-fn expectVarintWritten(v: u64, bytes: []const u8) !void {
     var buf: [10]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
     try writer.unsigned_varint(&w, v);
-    try testing.expectEqualSlices(u8, bytes, w.buffered());
+    try testing.expectEqualSlices(u8, encoded, w.buffered());
 }
 
 test "unsigned_varint stops at varint boundary" {
