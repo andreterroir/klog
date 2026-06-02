@@ -202,7 +202,8 @@ pub const reader = struct {
             .transactional_id = try compact_nullable_str(r, buf),
             .acks = try r.takeInt(i16, BE),
             .timeout_ms = try r.takeInt(i32, BE),
-            .topic_data_size = try compact_size(r),
+            // topic_data is a non-nullable COMPACT array; reject the null marker.
+            .topic_data_size = (try compact_size(r)) orelse return Error.ProtocolError,
         };
     }
 
@@ -215,7 +216,8 @@ pub const reader = struct {
         try r.readSliceAll(&topic_id);
         return .{
             .topic_id = topic_id,
-            .partition_count = try compact_size(r),
+            // partition_data is a non-nullable COMPACT array; reject the null marker.
+            .partition_count = (try compact_size(r)) orelse return Error.ProtocolError,
         };
     }
 
@@ -224,14 +226,10 @@ pub const reader = struct {
     /// consumes `records_size` bytes of records (or none when null) before
     /// reading the next partition.
     pub fn partition_data(r: *Io.Reader) !PartitionData {
-        const index = try r.takeInt(i32, BE);
-        // records => COMPACT_NULLABLE_RECORDS: length N+1, or 0 for null.
-        // compact_size would underflow on the 0 marker, so decode it here
-        // the same way compact_nullable_str handles its null length.
-        const len = try unsigned_varint(r);
         return .{
-            .index = index,
-            .records_size = if (len == 0) null else len - 1,
+            .index = try r.takeInt(i32, BE),
+            // records => COMPACT_NULLABLE_RECORDS: null when the length is 0.
+            .records_size = try compact_size(r),
         };
     }
 
@@ -255,20 +253,23 @@ pub const reader = struct {
     /// bytes follow which are the UTF-8 encoding of the character
     /// sequence. A null string is represented with a length of 0.
     fn compact_nullable_str(r: *Io.Reader, buf: []u8) !?[]u8 {
-        const len = try unsigned_varint(r);
-        if (len == 0) return null;
-        const n: usize = @intCast(len - 1);
+        const n: usize = @intCast((try compact_size(r)) orelse return null);
         if (n > buf.len) return Error.BufferTooSmall;
         try r.readSliceAll(buf[0..n]);
         return buf[0..n];
     }
 
     /// Reads the length N from a COMPACT array, encoded as N + 1 in an
-    /// UNSIGNED_VARINT. The same length-prefix scheme is used for compact
-    /// byte sequences (e.g. records), so this applies to both. In protocol
+    /// UNSIGNED_VARINT, or null when the length is 0 — the COMPACT_NULLABLE
+    /// null marker. The same length-prefix scheme is used for compact byte
+    /// sequences (e.g. records), so this applies to both. In protocol
     /// documentation a compact array of T instances is referred to as (T).
-    fn compact_size(r: *Io.Reader) !u64 {
-        return try unsigned_varint(r) - 1;
+    /// Mirrors the writer's `compact_size(?u64)`; non-nullable callers
+    /// reject the null marker.
+    fn compact_size(r: *Io.Reader) !?u64 {
+        const len = try unsigned_varint(r);
+        if (len == 0) return null;
+        return len - 1;
     }
 
     /// Unsigned LEB128, as used by Protocol Buffers.
@@ -641,6 +642,15 @@ test "compact_size round-trip" {
 
     var r = Io.Reader.fixed(&buf);
     try testing.expectEqual(size, try reader.compact_size(&r));
+}
+
+test "compact_size round-trip null" {
+    var buf: [16]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    try writer.compact_size(&w, null);
+
+    var r = Io.Reader.fixed(&buf);
+    try testing.expectEqual(null, try reader.compact_size(&r));
 }
 
 test "compact_size encodes null as zero" {
