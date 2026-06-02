@@ -269,11 +269,14 @@ pub const writer = struct {
         try unsigned_varint(w, req.topic_data_size + 1);
     }
 
-    /// topic_data => topic_id (partition_data)
-    /// Writes the 16-byte UUID followed by the COMPACT array of partition_data.
-    pub fn topic_data(w: *Io.Writer, td: TopicData) !void {
-        try w.writeAll(&td.topic_id);
-        try partition_data(w, td.partition_data);
+    /// Writes a COMPACT array of topic_data: the element count as a compact
+    /// array size, followed by each { topic_id (partition_data) } entry.
+    fn topic_data(w: *Io.Writer, arr: []const TopicData) !void {
+        try compact_size(w, arr.len);
+        for (arr) |topic| {
+            try w.writeAll(&topic.topic_id);
+            try partition_data(w, topic.partition_data);
+        }
     }
 
     /// Writes a COMPACT array of partition_data: the element count as a
@@ -441,19 +444,22 @@ test "produce_req round-trip without transactional_id" {
     try testing.expect(read.transactional_id == null);
 }
 
-test "topic_data writes topic_id and partition_data" {
+test "topic_data writes count, ids, and partition_data" {
     var buf: [64]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
-    const td = TopicData{
-        .topic_id = .{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 },
-        .partition_data = &[_]PartitionData{
-            .{ .index = 1, .records = &[_]u8{ 0xde, 0xad, 0xbe } },
-            .{ .index = 2, .records = null },
+    const topics = [_]TopicData{
+        .{
+            .topic_id = .{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 },
+            .partition_data = &[_]PartitionData{
+                .{ .index = 1, .records = &[_]u8{ 0xde, 0xad, 0xbe } },
+                .{ .index = 2, .records = null },
+            },
         },
     };
-    try writer.topic_data(&w, td);
+    try writer.topic_data(&w, &topics);
 
     try testing.expectEqualSlices(u8, &[_]u8{
+        0x02, // compact array size: 1 topic (N+1)
         0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, // topic_id UUID
         0x03, // compact array size: 2 partitions (N+1)
         0x00, 0x00, 0x00, 0x01, // index 1
@@ -463,19 +469,14 @@ test "topic_data writes topic_id and partition_data" {
     }, w.buffered());
 }
 
-test "topic_data writes empty partition_data" {
-    var buf: [32]u8 = undefined;
+test "topic_data writes empty array" {
+    var buf: [16]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
-    const td = TopicData{
-        .topic_id = .{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 },
-        .partition_data = &[_]PartitionData{},
-    };
-    try writer.topic_data(&w, td);
+    const topics = [_]TopicData{};
+    try writer.topic_data(&w, &topics);
 
-    try testing.expectEqualSlices(u8, &[_]u8{
-        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, // topic_id UUID
-        0x01, // compact array size for zero partitions (N+1)
-    }, w.buffered());
+    // Just the compact array size for zero elements (N+1).
+    try testing.expectEqualSlices(u8, &[_]u8{0x01}, w.buffered());
 }
 
 test "partition_data writes count, indices, and records" {
