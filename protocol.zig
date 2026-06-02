@@ -57,14 +57,14 @@ pub const ProduceRequest = struct {
 /// partition_data => { index records }
 pub const TopicData = struct {
     topic_id: [16]u8, // UUID
-    partition_data: []TopicData,
+    partition_data: []const PartitionData,
 };
 
 /// index => INT32
 /// records => COMPACT_NULLABLE_RECORDS
 pub const PartitionData = struct {
     index: i32,
-    records: ?[]u8, // ?[]Record,
+    records: ?[]const u8, // ?[]Record,
 };
 
 pub const Record = struct {
@@ -266,14 +266,19 @@ pub const writer = struct {
         try unsigned_varint(w, req.topic_data_size + 1);
     }
 
-    fn partition_data(w: *Io.Writer, arr: []PartitionData) !void {
+    /// Writes a COMPACT array of partition_data: the element count as a
+    /// compact array size, followed by each { index records } entry.
+    fn partition_data(w: *Io.Writer, arr: []const PartitionData) !void {
+        try compact_arr_size(w, arr.len);
         for (arr) |partition| {
-            try w.writeInt(i32, partition.index);
+            try w.writeInt(i32, partition.index, BE);
             if (partition.records) |records| {
-                try compact_arr_size(records.len);
+                // COMPACT_NULLABLE_RECORDS: length N+1 as an unsigned varint
+                // followed by the N raw record-batch bytes.
+                try compact_arr_size(w, records.len);
                 try w.writeAll(records);
             } else {
-                try compact_arr_size(null);
+                try compact_arr_size(w, null);
             }
         }
     }
@@ -423,6 +428,34 @@ test "produce_req round-trip without transactional_id" {
     var r = Io.Reader.fixed(&buf);
     const read = try reader.produce_req(&r, &out);
     try testing.expect(read.transactional_id == null);
+}
+
+test "partition_data writes count, indices, and records" {
+    var buf: [64]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    const partitions = [_]PartitionData{
+        .{ .index = 1, .records = "abc" },
+        .{ .index = 2, .records = null },
+    };
+    try writer.partition_data(&w, &partitions);
+
+    try testing.expectEqualSlices(u8, &[_]u8{
+        0x03, // compact array size: 2 partitions (N+1)
+        0x00, 0x00, 0x00, 0x01, // index 1
+        0x04, 0x61, 0x62, 0x63, // records "abc": size 3 (N+1) then bytes
+        0x00, 0x00, 0x00, 0x02, // index 2
+        0x00, // null records
+    }, w.buffered());
+}
+
+test "partition_data writes empty array" {
+    var buf: [16]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    const partitions = [_]PartitionData{};
+    try writer.partition_data(&w, &partitions);
+
+    // Just the compact array size for zero elements (N+1).
+    try testing.expectEqualSlices(u8, &[_]u8{0x01}, w.buffered());
 }
 
 test "nullable_str round-trip non-null" {
