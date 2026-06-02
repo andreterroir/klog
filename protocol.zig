@@ -64,7 +64,7 @@ pub const TopicData = struct {
 /// records => COMPACT_NULLABLE_RECORDS
 pub const PartitionData = struct {
     index: i32,
-    records: ?[]Record,
+    records: ?[]u8, // ?[]Record,
 };
 
 pub const Record = struct {
@@ -266,6 +266,18 @@ pub const writer = struct {
         try unsigned_varint(w, req.topic_data_size + 1);
     }
 
+    fn partition_data(w: *Io.Writer, arr: []PartitionData) !void {
+        for (arr) |partition| {
+            try w.writeInt(i32, partition.index);
+            if (partition.records) |records| {
+                try compact_arr_size(records.len);
+                try w.writeAll(records);
+            } else {
+                try compact_arr_size(null);
+            }
+        }
+    }
+
     fn nullable_str(w: *Io.Writer, str: ?[]const u8) !void {
         if (str) |s| {
             const len: i16 = @intCast(s.len);
@@ -280,6 +292,14 @@ pub const writer = struct {
         if (str) |s| {
             try unsigned_varint(w, @as(u64, s.len) + 1);
             try w.writeAll(s);
+        } else {
+            try unsigned_varint(w, 0);
+        }
+    }
+
+    fn compact_arr_size(w: *Io.Writer, size: ?u64) !void {
+        if (size) |s| {
+            try unsigned_varint(w, s);
         } else {
             try unsigned_varint(w, 0);
         }
