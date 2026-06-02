@@ -28,6 +28,7 @@ pub fn main(init: std.process.Init) !void {
     const req = proto.ProduceRequest{
         .acks = -1, // ISR
         .timeout_ms = 1000,
+        .topic_data_size = 1,
     };
     try writer.produce_req(io_writer, req);
 }

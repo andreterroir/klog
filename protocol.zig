@@ -51,6 +51,8 @@ pub const ProduceRequest = struct {
     acks: i16,
     /// The timeout to await a response in milliseconds.
     timeout_ms: i32,
+    /// The number of topics the request contains data for.
+    topic_data_size: u64,
 };
 
 /// Produce Response (Version: 12) => [responses] throttle_time_ms node_endpoints]<tag: 0>
@@ -169,6 +171,7 @@ pub const reader = struct {
             .transactional_id = try compact_nullable_str(r, buf),
             .acks = try r.takeInt(i16, BE),
             .timeout_ms = try r.takeInt(i32, BE),
+            .topic_data_size = try compact_arr_size(r),
         };
     }
 
@@ -198,6 +201,17 @@ pub const reader = struct {
         if (n > buf.len) return Error.BufferTooSmall;
         try r.readSliceAll(buf[0..n]);
         return buf[0..n];
+    }
+
+    /// Represents a sequence of objects of a given
+    /// type T. Type T can be either a primitive type
+    /// (e.g. STRING) or a structure. First, the length N
+    /// + 1 is given as an UNSIGNED_VARINT. Then N
+    /// instances of type T follow. In protocol
+    /// documentation a compact array of T instances
+    /// is referred to as (T).
+    fn compact_arr_size(r: *Io.Reader) !u64 {
+        return try unsigned_varint(r) - 1;
     }
 
     /// Unsigned LEB128, as used by Protocol Buffers.
@@ -233,6 +247,7 @@ pub const writer = struct {
         try compact_nullable_str(w, req.transactional_id);
         try w.writeInt(i16, req.acks, BE);
         try w.writeInt(i32, req.timeout_ms, BE);
+        try unsigned_varint(w, req.topic_data_size + 1);
     }
 
     fn nullable_str(w: *Io.Writer, str: ?[]const u8) !void {
@@ -289,6 +304,17 @@ test "readInt" {
     var buf = [_]u8{0} ** 8;
     buf[0] = 1;
     try testing.expectEqual(1, std.mem.readInt(u64, &buf, std.builtin.Endian.little));
+}
+
+test "compact_arr_size" {
+    var buf: [16]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+
+    const size: u64 = 7;
+    try writer.unsigned_varint(&w, size + 1);
+
+    var r = Io.Reader.fixed(&buf);
+    try testing.expectEqual(size, try reader.compact_arr_size(&r));
 }
 
 test "unsigned_varint" {
@@ -511,13 +537,14 @@ test "req_header round-trip with unsupported api_key" {
     }
 }
 
-test "produce_req round-trip with transactional_id" {
+test "produce_req round-trip" {
     var buf: [64]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
     const written = ProduceRequest{
         .transactional_id = "txn-42",
         .acks = -1,
         .timeout_ms = 30_000,
+        .topic_data_size = 3,
     };
     try writer.produce_req(&w, written);
 
@@ -526,14 +553,18 @@ test "produce_req round-trip with transactional_id" {
     const read = try reader.produce_req(&r, &out);
     try testing.expect(read.transactional_id != null);
     try testing.expectEqualStrings("txn-42", read.transactional_id.?);
+    try testing.expectEqual(-1, read.acks);
+    try testing.expectEqual(30_000, read.timeout_ms);
+    try testing.expectEqual(3, read.topic_data_size);
 }
 
 test "produce_req round-trip without transactional_id" {
     var buf: [16]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
     const written = ProduceRequest{
-        .acks = 0,
-        .timeout_ms = 0,
+        .acks = 1,
+        .timeout_ms = 50,
+        .topic_data_size = 2,
     };
     try writer.produce_req(&w, written);
 
