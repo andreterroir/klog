@@ -26,41 +26,33 @@ pub fn main(init: std.process.Init) !void {
     };
     try writer.req_header(io_writer, req_header);
 
-    // Example data: topic one with a single partition, topic two with two.
-    const topic1_uuid = [_]u8{0x11} ** 16;
-    const topic2_uuid = [_]u8{0x22} ** 16;
-    const topics = [_]proto.TopicData{
-        .{
-            .topic_id = topic1_uuid,
-            .partition_data = &.{
-                .{ .index = 0, .records = &[_]u8{ 0xca, 0xfe, 0xba, 0xbe } },
-            },
-        },
-        .{
-            .topic_id = topic2_uuid,
-            .partition_data = &.{
-                .{ .index = 0, .records = &[_]u8{ 0xde, 0xad, 0xbe, 0xef } },
-                .{ .index = 1, .records = &[_]u8{ 0xfe, 0xed, 0xfa, 0xce } },
-            },
-        },
-    };
-
     const req = proto.ProduceRequest{
         .acks = -1, // ISR
         .timeout_ms = 1000,
-        .topic_data_size = topics.len,
+        .topic_data_size = 2,
     };
     try writer.produce_req(io_writer, req);
 
-    // Write each topic header followed by its partitions, mirroring how the
-    // server streams them back out.
-    for (topics) |topic| {
-        try writer.topic_data(io_writer, .{
-            .topic_id = topic.topic_id,
-            .partition_count = topic.partition_data.len,
-        });
-        for (topic.partition_data) |partition| {
-            try writer.partition_data(io_writer, partition);
-        }
-    }
+    // Example data: topic one with a single partition, topic two with two.
+    // The record bytes live outside the protocol structs, so each partition
+    // is a header write followed by its records.
+    const topic1_uuid = [_]u8{0x11} ** 16;
+    const topic2_uuid = [_]u8{0x22} ** 16;
+
+    try writer.topic_data(io_writer, .{ .topic_id = topic1_uuid, .partition_count = 1 });
+    try write_partition(io_writer, 0, &[_]u8{ 0xca, 0xfe, 0xba, 0xbe });
+
+    try writer.topic_data(io_writer, .{ .topic_id = topic2_uuid, .partition_count = 2 });
+    try write_partition(io_writer, 0, &[_]u8{ 0xde, 0xad, 0xbe, 0xef });
+    try write_partition(io_writer, 1, &[_]u8{ 0xfe, 0xed, 0xfa, 0xce });
+}
+
+/// Writes a partition_data header followed by its record bytes, deriving
+/// the records size from the slice so the two always agree.
+fn write_partition(w: *std.Io.Writer, index: i32, records: ?[]const u8) !void {
+    try proto.writer.partition_data(w, .{
+        .index = index,
+        .records_size = if (records) |r| r.len else null,
+    });
+    if (records) |r| try w.writeAll(r);
 }

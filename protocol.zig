@@ -57,24 +57,13 @@ pub const ProduceRequest = struct {
     topic_data_size: u64,
 };
 
-/// topic_id => UUID
-/// partition_data => { index records }
-pub const TopicData = struct {
-    topic_id: [16]u8, // UUID
-    partition_data: []const PartitionData,
-};
-
-/// index => INT32
-/// records => COMPACT_NULLABLE_RECORDS
-pub const PartitionData = struct {
-    index: i32,
-    records: ?[]const u8, // ?[]Record,
-};
-
 /// The fixed part of a topic_data entry, handled up front so the
 /// partitions can be streamed one at a time without buffering the whole
 /// entry. The topic array length itself lives in
 /// `ProduceRequest.topic_data_size`.
+///
+/// topic_id => UUID
+/// partition_data => { index records }
 pub const Topic = struct {
     topic_id: [16]u8, // UUID
     /// The number of partition_data entries that follow.
@@ -83,8 +72,11 @@ pub const Topic = struct {
 
 /// The fixed part of a partition_data entry. `records_size` is the byte
 /// length of the COMPACT_NULLABLE_RECORDS that follow (null for null
-/// records); the caller consumes those bytes itself rather than buffering
-/// them here.
+/// records); those bytes live outside this struct and are written/consumed
+/// by the caller rather than buffered here.
+///
+/// index => INT32
+/// records => COMPACT_NULLABLE_RECORDS
 pub const Partition = struct {
     index: i32,
     records_size: ?u64,
@@ -324,16 +316,14 @@ pub const writer = struct {
         try compact_size(w, topic.partition_count);
     }
 
-    /// Writes one partition_data entry: the index followed by its
-    /// COMPACT_NULLABLE_RECORDS (length N+1 then N bytes, or 0 for null).
-    pub fn partition_data(w: *Io.Writer, partition: PartitionData) !void {
+    /// Writes one partition_data entry's fixed part: the index followed by
+    /// the COMPACT_NULLABLE_RECORDS length prefix (N+1, or 0 for null). The
+    /// caller then writes the `records_size` record bytes itself, mirroring
+    /// how `reader.partition_data` returns the size and leaves the bytes in
+    /// the stream for the caller to consume.
+    pub fn partition_data(w: *Io.Writer, partition: Partition) !void {
         try w.writeInt(i32, partition.index, BE);
-        if (partition.records) |records| {
-            try compact_size(w, records.len);
-            try w.writeAll(records);
-        } else {
-            try compact_size(w, null);
-        }
+        try compact_size(w, partition.records_size);
     }
 
     fn nullable_str(w: *Io.Writer, str: ?[]const u8) !void {
@@ -516,7 +506,9 @@ test "partition_data round-trip with records" {
     var buf: [16]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
     const records = [_]u8{ 0xde, 0xad, 0xbe };
-    try writer.partition_data(&w, .{ .index = 1, .records = &records });
+    // The header carries only the size; the bytes are written separately.
+    try writer.partition_data(&w, .{ .index = 1, .records_size = records.len });
+    try w.writeAll(&records);
 
     var r = Io.Reader.fixed(&buf);
     const read = try reader.partition_data(&r);
@@ -531,7 +523,7 @@ test "partition_data round-trip with records" {
 test "partition_data round-trip with null records" {
     var buf: [16]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
-    try writer.partition_data(&w, .{ .index = 2, .records = null });
+    try writer.partition_data(&w, .{ .index = 2, .records_size = null });
 
     var r = Io.Reader.fixed(&buf);
     const read = try reader.partition_data(&r);
