@@ -29,8 +29,6 @@ pub fn main(init: std.process.Init) !void {
         .transactional_id = null,
         .acks = -1, // ISR
         .timeout_ms = 1000,
-        .topic_id = [_]u8{0xff} ** 16,
-        .partition_index = 0,
     };
     try writer.produce_req(io_writer, req);
 }
