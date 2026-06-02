@@ -336,99 +336,93 @@ test "msg_size round-trip zero" {
     try testing.expectEqual(@as(i32, 0), try reader.msg_size(&r));
 }
 
-test "readInt" {
-    var buf = [_]u8{0} ** 8;
-    buf[0] = 1;
-    try testing.expectEqual(1, std.mem.readInt(u64, &buf, std.builtin.Endian.little));
+test "req_header round-trip with client_id" {
+    var buf: [64]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    const written = RequestHeader{
+        .api_key = .produce,
+        .api_version = 13,
+        .correlation_id = 42,
+        .client_id = "test-client",
+    };
+    try writer.req_header(&w, written);
+
+    var out: [64]u8 = undefined;
+    var r = Io.Reader.fixed(&buf);
+    const read = try reader.req_header(&r, &out);
+    try testing.expectEqual(written.api_key, read.api_key);
+    try testing.expectEqual(written.api_version, read.api_version);
+    try testing.expectEqual(written.correlation_id, read.correlation_id);
+    try testing.expect(read.client_id != null);
+    try testing.expectEqualStrings("test-client", read.client_id.?);
 }
 
-test "compact_arr_size" {
+test "req_header round-trip with null client_id" {
+    var buf: [32]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    const written = RequestHeader{
+        .api_key = .fetch,
+        .api_version = 7,
+        .correlation_id = -1,
+        .client_id = null,
+    };
+    try writer.req_header(&w, written);
+
+    var out: [32]u8 = undefined;
+    var r = Io.Reader.fixed(&buf);
+    const read = try reader.req_header(&r, &out);
+    try testing.expect(read.client_id == null);
+}
+
+test "req_header round-trip with unsupported api_key" {
+    var buf: [32]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    const unsupported_api_key = 255; // not mapped in ApiKey
+    try w.writeInt(i16, unsupported_api_key, BE);
+
+    var r = Io.Reader.fixed(&buf);
+    const read = try reader.api_key(&r);
+    switch (read) {
+        _ => {},
+        else => try std.testing.expect(false),
+    }
+}
+
+test "produce_req round-trip" {
+    var buf: [64]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    const written = ProduceRequest{
+        .transactional_id = "txn-42",
+        .acks = -1,
+        .timeout_ms = 30_000,
+        .topic_data_size = 3,
+    };
+    try writer.produce_req(&w, written);
+
+    var out: [64]u8 = undefined;
+    var r = Io.Reader.fixed(&buf);
+    const read = try reader.produce_req(&r, &out);
+    try testing.expect(read.transactional_id != null);
+    try testing.expectEqualStrings("txn-42", read.transactional_id.?);
+    try testing.expectEqual(-1, read.acks);
+    try testing.expectEqual(30_000, read.timeout_ms);
+    try testing.expectEqual(3, read.topic_data_size);
+}
+
+test "produce_req round-trip without transactional_id" {
     var buf: [16]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
+    const written = ProduceRequest{
+        .acks = 1,
+        .timeout_ms = 50,
+        .topic_data_size = 2,
+    };
+    try writer.produce_req(&w, written);
 
-    const size: u64 = 7;
-    try writer.unsigned_varint(&w, size + 1);
-
+    var out: [16]u8 = undefined;
     var r = Io.Reader.fixed(&buf);
-    try testing.expectEqual(size, try reader.compact_arr_size(&r));
-}
-
-test "unsigned_varint" {
-    try expectVarintBytes(&[_]u8{0x00}, 0);
-    try expectVarintBytes(&[_]u8{0x01}, 1);
-    // largest 1-byte varint
-    try expectVarintBytes(&[_]u8{0x7f}, 127);
-    // smallest 2-byte varint
-    try expectVarintBytes(&[_]u8{ 0x80, 0x01 }, 128);
-    // worked example from the protobuf docs
-    try expectVarintBytes(&[_]u8{ 0x96, 0x01 }, 150);
-    // largest 2-byte varint
-    try expectVarintBytes(&[_]u8{ 0xff, 0x7f }, 16383);
-    // smallest 3-byte varint
-    try expectVarintBytes(&[_]u8{ 0x80, 0x80, 0x01 }, 16384);
-    try expectVarintBytes(
-        &[_]u8{ 0xff, 0xff, 0xff, 0xff, 0x0f },
-        std.math.maxInt(u32),
-    );
-    // largest u64; uses the full 10-byte encoding
-    try expectVarintBytes(
-        &[_]u8{ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01 },
-        std.math.maxInt(u64),
-    );
-}
-
-fn expectVarintBytes(bytes: []const u8, v: u64) !void {
-    var r = Io.Reader.fixed(bytes);
-    try testing.expectEqual(v, try reader.unsigned_varint(&r));
-}
-
-test "unsigned_varint write" {
-    try expectVarintWritten(0, &[_]u8{0x00});
-    try expectVarintWritten(1, &[_]u8{0x01});
-    try expectVarintWritten(127, &[_]u8{0x7f});
-    try expectVarintWritten(128, &[_]u8{ 0x80, 0x01 });
-    try expectVarintWritten(150, &[_]u8{ 0x96, 0x01 });
-    try expectVarintWritten(16383, &[_]u8{ 0xff, 0x7f });
-    try expectVarintWritten(16384, &[_]u8{ 0x80, 0x80, 0x01 });
-    try expectVarintWritten(
-        std.math.maxInt(u32),
-        &[_]u8{ 0xff, 0xff, 0xff, 0xff, 0x0f },
-    );
-    try expectVarintWritten(
-        std.math.maxInt(u64),
-        &[_]u8{ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01 },
-    );
-}
-
-fn expectVarintWritten(v: u64, bytes: []const u8) !void {
-    var buf: [10]u8 = undefined;
-    var w = Io.Writer.fixed(&buf);
-    try writer.unsigned_varint(&w, v);
-    try testing.expectEqualSlices(u8, bytes, w.buffered());
-}
-
-test "unsigned_varint stops at varint boundary" {
-    // Bytes following the varint must not be consumed even when their
-    // continuation bit is set.
-    const buf = [_]u8{ 0x96, 0x01, 0xff, 0xff };
-    var r = Io.Reader.fixed(&buf);
-    try testing.expectEqual(@as(u64, 150), try reader.unsigned_varint(&r));
-    try testing.expectEqual(@as(u8, 0xff), try r.takeByte());
-    try testing.expectEqual(@as(u8, 0xff), try r.takeByte());
-}
-
-test "unsigned_varint rejects over-long input" {
-    const buf = [_]u8{0xff} ** 11;
-    var r = Io.Reader.fixed(&buf);
-    try testing.expectError(error.ProtocolError, reader.unsigned_varint(&r));
-}
-
-test "unsigned_varint rejects 10th-byte payload overflow" {
-    // Nine continuation bytes followed by a 10th byte whose payload (0x02)
-    // does not fit in the single remaining bit of a u64.
-    const buf = [_]u8{ 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x02 };
-    var r = Io.Reader.fixed(&buf);
-    try testing.expectError(error.ProtocolError, reader.unsigned_varint(&r));
+    const read = try reader.produce_req(&r, &out);
+    try testing.expect(read.transactional_id == null);
 }
 
 test "nullable_str round-trip non-null" {
@@ -521,91 +515,97 @@ test "compact_nullable_str rejects too-small buffer" {
     try testing.expectError(error.BufferTooSmall, reader.compact_nullable_str(&r, &out));
 }
 
-test "req_header round-trip with client_id" {
-    var buf: [64]u8 = undefined;
-    var w = Io.Writer.fixed(&buf);
-    const written = RequestHeader{
-        .api_key = .produce,
-        .api_version = 13,
-        .correlation_id = 42,
-        .client_id = "test-client",
-    };
-    try writer.req_header(&w, written);
-
-    var out: [64]u8 = undefined;
-    var r = Io.Reader.fixed(&buf);
-    const read = try reader.req_header(&r, &out);
-    try testing.expectEqual(written.api_key, read.api_key);
-    try testing.expectEqual(written.api_version, read.api_version);
-    try testing.expectEqual(written.correlation_id, read.correlation_id);
-    try testing.expect(read.client_id != null);
-    try testing.expectEqualStrings("test-client", read.client_id.?);
-}
-
-test "req_header round-trip with null client_id" {
-    var buf: [32]u8 = undefined;
-    var w = Io.Writer.fixed(&buf);
-    const written = RequestHeader{
-        .api_key = .fetch,
-        .api_version = 7,
-        .correlation_id = -1,
-        .client_id = null,
-    };
-    try writer.req_header(&w, written);
-
-    var out: [32]u8 = undefined;
-    var r = Io.Reader.fixed(&buf);
-    const read = try reader.req_header(&r, &out);
-    try testing.expect(read.client_id == null);
-}
-
-test "req_header round-trip with unsupported api_key" {
-    var buf: [32]u8 = undefined;
-    var w = Io.Writer.fixed(&buf);
-    const unsupported_api_key = 255; // not mapped in ApiKey
-    try w.writeInt(i16, unsupported_api_key, BE);
-
-    var r = Io.Reader.fixed(&buf);
-    const read = try reader.api_key(&r);
-    switch (read) {
-        _ => {},
-        else => try std.testing.expect(false),
-    }
-}
-
-test "produce_req round-trip" {
-    var buf: [64]u8 = undefined;
-    var w = Io.Writer.fixed(&buf);
-    const written = ProduceRequest{
-        .transactional_id = "txn-42",
-        .acks = -1,
-        .timeout_ms = 30_000,
-        .topic_data_size = 3,
-    };
-    try writer.produce_req(&w, written);
-
-    var out: [64]u8 = undefined;
-    var r = Io.Reader.fixed(&buf);
-    const read = try reader.produce_req(&r, &out);
-    try testing.expect(read.transactional_id != null);
-    try testing.expectEqualStrings("txn-42", read.transactional_id.?);
-    try testing.expectEqual(-1, read.acks);
-    try testing.expectEqual(30_000, read.timeout_ms);
-    try testing.expectEqual(3, read.topic_data_size);
-}
-
-test "produce_req round-trip without transactional_id" {
+test "compact_arr_size" {
     var buf: [16]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
-    const written = ProduceRequest{
-        .acks = 1,
-        .timeout_ms = 50,
-        .topic_data_size = 2,
-    };
-    try writer.produce_req(&w, written);
 
-    var out: [16]u8 = undefined;
+    const size: u64 = 7;
+    try writer.unsigned_varint(&w, size + 1);
+
     var r = Io.Reader.fixed(&buf);
-    const read = try reader.produce_req(&r, &out);
-    try testing.expect(read.transactional_id == null);
+    try testing.expectEqual(size, try reader.compact_arr_size(&r));
+}
+
+test "unsigned_varint" {
+    try expectVarintBytes(&[_]u8{0x00}, 0);
+    try expectVarintBytes(&[_]u8{0x01}, 1);
+    // largest 1-byte varint
+    try expectVarintBytes(&[_]u8{0x7f}, 127);
+    // smallest 2-byte varint
+    try expectVarintBytes(&[_]u8{ 0x80, 0x01 }, 128);
+    // worked example from the protobuf docs
+    try expectVarintBytes(&[_]u8{ 0x96, 0x01 }, 150);
+    // largest 2-byte varint
+    try expectVarintBytes(&[_]u8{ 0xff, 0x7f }, 16383);
+    // smallest 3-byte varint
+    try expectVarintBytes(&[_]u8{ 0x80, 0x80, 0x01 }, 16384);
+    try expectVarintBytes(
+        &[_]u8{ 0xff, 0xff, 0xff, 0xff, 0x0f },
+        std.math.maxInt(u32),
+    );
+    // largest u64; uses the full 10-byte encoding
+    try expectVarintBytes(
+        &[_]u8{ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01 },
+        std.math.maxInt(u64),
+    );
+}
+
+fn expectVarintBytes(bytes: []const u8, v: u64) !void {
+    var r = Io.Reader.fixed(bytes);
+    try testing.expectEqual(v, try reader.unsigned_varint(&r));
+}
+
+test "unsigned_varint write" {
+    try expectVarintWritten(0, &[_]u8{0x00});
+    try expectVarintWritten(1, &[_]u8{0x01});
+    try expectVarintWritten(127, &[_]u8{0x7f});
+    try expectVarintWritten(128, &[_]u8{ 0x80, 0x01 });
+    try expectVarintWritten(150, &[_]u8{ 0x96, 0x01 });
+    try expectVarintWritten(16383, &[_]u8{ 0xff, 0x7f });
+    try expectVarintWritten(16384, &[_]u8{ 0x80, 0x80, 0x01 });
+    try expectVarintWritten(
+        std.math.maxInt(u32),
+        &[_]u8{ 0xff, 0xff, 0xff, 0xff, 0x0f },
+    );
+    try expectVarintWritten(
+        std.math.maxInt(u64),
+        &[_]u8{ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01 },
+    );
+}
+
+fn expectVarintWritten(v: u64, bytes: []const u8) !void {
+    var buf: [10]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    try writer.unsigned_varint(&w, v);
+    try testing.expectEqualSlices(u8, bytes, w.buffered());
+}
+
+test "unsigned_varint stops at varint boundary" {
+    // Bytes following the varint must not be consumed even when their
+    // continuation bit is set.
+    const buf = [_]u8{ 0x96, 0x01, 0xff, 0xff };
+    var r = Io.Reader.fixed(&buf);
+    try testing.expectEqual(@as(u64, 150), try reader.unsigned_varint(&r));
+    try testing.expectEqual(@as(u8, 0xff), try r.takeByte());
+    try testing.expectEqual(@as(u8, 0xff), try r.takeByte());
+}
+
+test "unsigned_varint rejects over-long input" {
+    const buf = [_]u8{0xff} ** 11;
+    var r = Io.Reader.fixed(&buf);
+    try testing.expectError(error.ProtocolError, reader.unsigned_varint(&r));
+}
+
+test "unsigned_varint rejects 10th-byte payload overflow" {
+    // Nine continuation bytes followed by a 10th byte whose payload (0x02)
+    // does not fit in the single remaining bit of a u64.
+    const buf = [_]u8{ 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x02 };
+    var r = Io.Reader.fixed(&buf);
+    try testing.expectError(error.ProtocolError, reader.unsigned_varint(&r));
+}
+
+test "readInt" {
+    var buf = [_]u8{0} ** 8;
+    buf[0] = 1;
+    try testing.expectEqual(1, std.mem.readInt(u64, &buf, std.builtin.Endian.little));
 }
