@@ -45,4 +45,5 @@ here wrong, the change is incomplete until this file matches.
 ## Pull requests
 
 If later commits invalidate the PR's title or description, update them to
-match the final diff before asking for review.
+match the final diff before asking for review. (Never leave the PR
+description empty — summarize what changed and why.)
