@@ -49,12 +49,12 @@ pub fn main(init: std.process.Init) !void {
     try write_partition(io_writer, 2, &[_]u8{ 0xfe, 0xed, 0xfa, 0xce });
 }
 
-/// Writes a partition_data header followed by its record bytes, deriving
-/// the records size from the slice so the two always agree.
+/// Writes a partition_data entry: the index, then its records as a
+/// COMPACT_NULLABLE byte sequence (length prefix via compact_size, then the
+/// bytes). compact_size derives the length from the slice, so the prefix and
+/// the bytes always agree.
 fn write_partition(w: *std.Io.Writer, index: i32, records: ?[]const u8) !void {
-    try proto.writer.partition_data(w, .{
-        .index = index,
-        .records_size = if (records) |r| r.len else null,
-    });
+    try proto.writer.partition_data(w, .{ .index = index });
+    try proto.writer.compact_size(w, u8, records);
     if (records) |r| try w.writeAll(r);
 }

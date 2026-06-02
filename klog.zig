@@ -66,7 +66,8 @@ fn produce(io: Io, io_reader: *Io.Reader, stream: Io.net.Stream) !void {
         log.info("topic {x}: {d} partition(s)", .{ topic.topic_id, topic.partition_count });
         for (0..topic.partition_count) |_| {
             const partition = try reader.partition_data(io_reader);
-            try log_records(io_reader, partition);
+            const records_size = try reader.compact_size(io_reader);
+            try log_records(io_reader, partition.index, records_size);
         }
     }
 }
@@ -75,9 +76,9 @@ fn produce(io: Io, io_reader: *Io.Reader, stream: Io.net.Stream) !void {
 /// fixed-size chunks so an arbitrarily large records blob never has to be
 /// held in memory at once. Logs the byte count and a short hex preview of
 /// the first chunk.
-fn log_records(io_reader: *Io.Reader, partition: proto.PartitionData) !void {
-    const size = partition.records_size orelse {
-        log.info("  partition {d}: null records", .{partition.index});
+fn log_records(io_reader: *Io.Reader, index: i32, records_size: ?u64) !void {
+    const size = records_size orelse {
+        log.info("  partition {d}: null records", .{index});
         return;
     };
 
@@ -86,7 +87,7 @@ fn log_records(io_reader: *Io.Reader, partition: proto.PartitionData) !void {
     try io_reader.readSliceAll(chunk[0..first_len]);
     const preview = chunk[0..@min(first_len, 16)];
     log.info("  partition {d}: {d} record byte(s), first {d}: {x}", .{
-        partition.index,
+        index,
         size,
         preview.len,
         preview,

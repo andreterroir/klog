@@ -70,16 +70,15 @@ pub const TopicData = struct {
     partition_count: u64,
 };
 
-/// The fixed part of a partition_data entry. `records_size` is the byte
-/// length of the COMPACT_NULLABLE_RECORDS that follow (null for null
-/// records); those bytes live outside this struct and are written/consumed
-/// by the caller rather than buffered here.
+/// The fixed part of a partition_data entry: just the partition index. The
+/// records that follow are a COMPACT_NULLABLE byte sequence whose length is
+/// read/written with `compact_size`, and whose bytes live outside this
+/// struct, consumed by the caller.
 ///
 /// index => INT32
 /// records => COMPACT_NULLABLE_RECORDS
 pub const PartitionData = struct {
     index: i32,
-    records_size: ?u64,
 };
 
 pub const Record = struct {
@@ -221,16 +220,12 @@ pub const reader = struct {
         };
     }
 
-    /// Reads one partition_data entry's fixed part: the partition index
-    /// followed by the COMPACT_NULLABLE_RECORDS length. The caller then
-    /// consumes `records_size` bytes of records (or none when null) before
-    /// reading the next partition.
+    /// Reads one partition_data entry's fixed part: the partition index.
+    /// The caller then reads the records length with `compact_size` and
+    /// consumes that many record bytes (or none when null) before reading
+    /// the next partition.
     pub fn partition_data(r: *Io.Reader) !PartitionData {
-        return .{
-            .index = try r.takeInt(i32, BE),
-            // records => COMPACT_NULLABLE_RECORDS: null when the length is 0.
-            .records_size = try compact_size(r),
-        };
+        return .{ .index = try r.takeInt(i32, BE) };
     }
 
     /// NULLABLE_STRING
@@ -259,14 +254,14 @@ pub const reader = struct {
         return buf[0..n];
     }
 
-    /// Reads the length N from a COMPACT array, encoded as N + 1 in an
+    /// Reads the length N of a COMPACT array, encoded as N + 1 in an
     /// UNSIGNED_VARINT, or null when the length is 0 — the COMPACT_NULLABLE
     /// null marker. The same length-prefix scheme is used for compact byte
-    /// sequences (e.g. records), so this applies to both. In protocol
-    /// documentation a compact array of T instances is referred to as (T).
-    /// Mirrors the writer's `compact_size(?u64)`; non-nullable callers
+    /// sequences (e.g. partition records), so this applies to both. In
+    /// protocol documentation a compact array of T instances is referred to
+    /// as (T). Mirrors the writer's `compact_size`; non-nullable callers
     /// reject the null marker.
-    fn compact_size(r: *Io.Reader) !?u64 {
+    pub fn compact_size(r: *Io.Reader) !?u64 {
         const len = try unsigned_varint(r);
         if (len == 0) return null;
         return len - 1;
@@ -314,17 +309,17 @@ pub const writer = struct {
     /// length itself is written by `produce_req` (topic_data_size).
     pub fn topic_data(w: *Io.Writer, topic: TopicData) !void {
         try w.writeAll(&topic.topic_id);
-        try compact_size(w, topic.partition_count);
+        // partition_data is a non-nullable COMPACT array; write its length
+        // directly as N+1, the same way produce_req writes topic_data_size.
+        try unsigned_varint(w, topic.partition_count + 1);
     }
 
-    /// Writes one partition_data entry's fixed part: the index followed by
-    /// the COMPACT_NULLABLE_RECORDS length prefix (N+1, or 0 for null). The
-    /// caller then writes the `records_size` record bytes itself, mirroring
-    /// how `reader.partition_data` returns the size and leaves the bytes in
-    /// the stream for the caller to consume.
+    /// Writes one partition_data entry's fixed part: the partition index.
+    /// The caller then writes the records with `compact_size` (the length
+    /// prefix) followed by the bytes, mirroring how `reader.partition_data`
+    /// reads the index and leaves the records for the caller.
     pub fn partition_data(w: *Io.Writer, partition: PartitionData) !void {
         try w.writeInt(i32, partition.index, BE);
-        try compact_size(w, partition.records_size);
     }
 
     fn nullable_str(w: *Io.Writer, str: ?[]const u8) !void {
@@ -338,22 +333,18 @@ pub const writer = struct {
     }
 
     fn compact_nullable_str(w: *Io.Writer, str: ?[]const u8) !void {
-        if (str) |s| {
-            try compact_size(w, s.len);
-            try w.writeAll(s);
-        } else {
-            try compact_size(w, null);
-        }
+        try compact_size(w, u8, str);
+        if (str) |s| try w.writeAll(s);
     }
 
-    /// Writes a compact length N as N+1 in an unsigned varint, or 0 for a
-    /// null value. The N bytes/elements follow for non-null values. The
-    /// produce request's COMPACT arrays — topic_data and partition_data —
-    /// are non-nullable and always pass a length; nullable compact strings
-    /// and records pass null to encode their null form.
-    fn compact_size(w: *Io.Writer, size: ?u64) !void {
-        if (size) |s| {
-            try unsigned_varint(w, s + 1);
+    /// Writes the length N of a COMPACT array as N+1 in an UNSIGNED_VARINT,
+    /// or 0 for a null array (the COMPACT_NULLABLE null marker). Generic
+    /// over the element type T: pass the slice itself — e.g. a partition's
+    /// records bytes or a compact string — rather than a precomputed count.
+    /// The caller writes the N elements/bytes afterwards for non-null values.
+    pub fn compact_size(w: *Io.Writer, comptime T: type, arr: ?[]const T) !void {
+        if (arr) |a| {
+            try unsigned_varint(w, a.len + 1);
         } else {
             try unsigned_varint(w, 0);
         }
@@ -503,33 +494,35 @@ test "topic_data round-trip with no partitions" {
     try testing.expectEqual(0, read.partition_count);
 }
 
-test "partition_data round-trip with records" {
+test "partition round-trip with records" {
     var buf: [16]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
     const records = [_]u8{ 0xde, 0xad, 0xbe };
-    // The header carries only the size; the bytes are written separately.
-    try writer.partition_data(&w, .{ .index = 1, .records_size = records.len });
+    // index, then the records as a length prefix followed by the bytes.
+    try writer.partition_data(&w, .{ .index = 1 });
+    try writer.compact_size(&w, u8, &records);
     try w.writeAll(&records);
 
     var r = Io.Reader.fixed(&buf);
     const read = try reader.partition_data(&r);
     try testing.expectEqual(1, read.index);
-    try testing.expectEqual(records.len, read.records_size);
+    try testing.expectEqual(records.len, try reader.compact_size(&r));
     // The record bytes are left in the stream for the caller to consume.
     var out: [3]u8 = undefined;
     try r.readSliceAll(&out);
     try testing.expectEqualSlices(u8, &records, &out);
 }
 
-test "partition_data round-trip with null records" {
+test "partition round-trip with null records" {
     var buf: [16]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
-    try writer.partition_data(&w, .{ .index = 2, .records_size = null });
+    try writer.partition_data(&w, .{ .index = 2 });
+    try writer.compact_size(&w, u8, null);
 
     var r = Io.Reader.fixed(&buf);
     const read = try reader.partition_data(&r);
     try testing.expectEqual(2, read.index);
-    try testing.expectEqual(null, read.records_size);
+    try testing.expectEqual(null, try reader.compact_size(&r));
 }
 
 test "nullable_str round-trip non-null" {
@@ -637,17 +630,18 @@ test "compact_size round-trip" {
     var buf: [16]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
 
-    const size: u64 = 7;
-    try writer.compact_size(&w, size);
+    // compact_size takes the slice and writes its length; here that is 7.
+    const arr = [_]u8{0} ** 7;
+    try writer.compact_size(&w, u8, &arr);
 
     var r = Io.Reader.fixed(&buf);
-    try testing.expectEqual(size, try reader.compact_size(&r));
+    try testing.expectEqual(arr.len, try reader.compact_size(&r));
 }
 
 test "compact_size round-trip null" {
     var buf: [16]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
-    try writer.compact_size(&w, null);
+    try writer.compact_size(&w, u8, null);
 
     var r = Io.Reader.fixed(&buf);
     try testing.expectEqual(null, try reader.compact_size(&r));
@@ -656,7 +650,7 @@ test "compact_size round-trip null" {
 test "compact_size encodes null as zero" {
     var buf: [16]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
-    try writer.compact_size(&w, null);
+    try writer.compact_size(&w, u8, null);
     try testing.expectEqualSlices(u8, &[_]u8{0x00}, w.buffered());
 }
 
