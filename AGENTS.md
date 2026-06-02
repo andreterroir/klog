@@ -32,6 +32,9 @@ Sources live at the repo root, not under `src/`:
 - Unit tests live next to the code they cover, in the same file via Zig's
   `test` blocks. Only `protocol.zig` is wired into the `test` step today;
   add new test sources to `build.zig` when you create them.
+- In `protocol.zig`, keep `reader`, `writer`, and the test block in the
+  same implementation order, with `reader`/`writer` mirroring each other.
+  See the module doc comment at the top of the file.
 
 ## Keeping this file current
 

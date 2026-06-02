@@ -1,4 +1,10 @@
 //! https://kafka.apache.org/43/design/protocol/
+//!
+//! `reader`, `writer`, and the test block at the bottom of this file are
+//! kept in the same order. Append new fields and messages in
+//! implementation order, and keep `reader`/`writer` mirror images of each
+//! other: a field added to one gets a matching entry in the other, with a
+//! test alongside it in the same position.
 
 const std = @import("std");
 const net = std.Io.net;
