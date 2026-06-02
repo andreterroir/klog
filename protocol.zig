@@ -42,7 +42,7 @@ pub const ResponseHeader = struct {};
 ///       index => INT32
 ///       records => COMPACT_NULLABLE_RECORDS
 pub const ProduceRequest = struct {
-    transactional_id: ?[]const u8,
+    transactional_id: ?[]const u8 = null,
     acks: i16,
     timeout_ms: i32,
 };

@@ -26,7 +26,6 @@ pub fn main(init: std.process.Init) !void {
     };
     try writer.req_header(io_writer, req_header);
     const req = proto.ProduceRequest{
-        .transactional_id = null,
         .acks = -1, // ISR
         .timeout_ms = 1000,
     };
