@@ -1,4 +1,10 @@
 //! https://kafka.apache.org/43/design/protocol/
+//!
+//! `reader`, `writer`, and the test block at the bottom of this file are
+//! kept in the same order. Append new fields and messages in
+//! implementation order, and keep `reader`/`writer` mirror images of each
+//! other: a field added to one gets a matching entry in the other, with a
+//! test alongside it in the same position.
 
 const std = @import("std");
 const net = std.Io.net;
@@ -57,14 +63,14 @@ pub const ProduceRequest = struct {
 /// partition_data => { index records }
 pub const TopicData = struct {
     topic_id: [16]u8, // UUID
-    partition_data: []TopicData,
+    partition_data: []const PartitionData,
 };
 
 /// index => INT32
 /// records => COMPACT_NULLABLE_RECORDS
 pub const PartitionData = struct {
     index: i32,
-    records: ?[]u8, // ?[]Record,
+    records: ?[]const u8, // ?[]Record,
 };
 
 pub const Record = struct {
@@ -187,7 +193,7 @@ pub const reader = struct {
             .transactional_id = try compact_nullable_str(r, buf),
             .acks = try r.takeInt(i16, BE),
             .timeout_ms = try r.takeInt(i32, BE),
-            .topic_data_size = try compact_arr_size(r),
+            .topic_data_size = try compact_size(r),
         };
     }
 
@@ -219,14 +225,11 @@ pub const reader = struct {
         return buf[0..n];
     }
 
-    /// Represents a sequence of objects of a given
-    /// type T. Type T can be either a primitive type
-    /// (e.g. STRING) or a structure. First, the length N
-    /// + 1 is given as an UNSIGNED_VARINT. Then N
-    /// instances of type T follow. In protocol
-    /// documentation a compact array of T instances
-    /// is referred to as (T).
-    fn compact_arr_size(r: *Io.Reader) !u64 {
+    /// Reads the length N from a COMPACT array, encoded as N + 1 in an
+    /// UNSIGNED_VARINT. The same length-prefix scheme is used for compact
+    /// byte sequences (e.g. records), so this applies to both. In protocol
+    /// documentation a compact array of T instances is referred to as (T).
+    fn compact_size(r: *Io.Reader) !u64 {
         return try unsigned_varint(r) - 1;
     }
 
@@ -266,14 +269,17 @@ pub const writer = struct {
         try unsigned_varint(w, req.topic_data_size + 1);
     }
 
-    fn partition_data(w: *Io.Writer, arr: []PartitionData) !void {
+    /// Writes a COMPACT array of partition_data: the element count as a
+    /// compact array size, followed by each { index records } entry.
+    fn partition_data(w: *Io.Writer, arr: []const PartitionData) !void {
+        try compact_size(w, arr.len);
         for (arr) |partition| {
-            try w.writeInt(i32, partition.index);
+            try w.writeInt(i32, partition.index, BE);
             if (partition.records) |records| {
-                try compact_arr_size(records.len);
+                try compact_size(w, records.len);
                 try w.writeAll(records);
             } else {
-                try compact_arr_size(null);
+                try compact_size(w, null);
             }
         }
     }
@@ -297,9 +303,12 @@ pub const writer = struct {
         }
     }
 
-    fn compact_arr_size(w: *Io.Writer, size: ?u64) !void {
+    /// Writes a compact length N as N+1 in an unsigned varint, or 0 for a
+    /// null array/sequence. Used for both COMPACT arrays and compact byte
+    /// sequences like COMPACT_NULLABLE_RECORDS, where the N bytes follow.
+    fn compact_size(w: *Io.Writer, size: ?u64) !void {
         if (size) |s| {
-            try unsigned_varint(w, s);
+            try unsigned_varint(w, s + 1);
         } else {
             try unsigned_varint(w, 0);
         }
@@ -336,99 +345,121 @@ test "msg_size round-trip zero" {
     try testing.expectEqual(@as(i32, 0), try reader.msg_size(&r));
 }
 
-test "readInt" {
-    var buf = [_]u8{0} ** 8;
-    buf[0] = 1;
-    try testing.expectEqual(1, std.mem.readInt(u64, &buf, std.builtin.Endian.little));
+test "req_header round-trip with client_id" {
+    var buf: [64]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    const written = RequestHeader{
+        .api_key = .produce,
+        .api_version = 13,
+        .correlation_id = 42,
+        .client_id = "test-client",
+    };
+    try writer.req_header(&w, written);
+
+    var out: [64]u8 = undefined;
+    var r = Io.Reader.fixed(&buf);
+    const read = try reader.req_header(&r, &out);
+    try testing.expectEqual(written.api_key, read.api_key);
+    try testing.expectEqual(written.api_version, read.api_version);
+    try testing.expectEqual(written.correlation_id, read.correlation_id);
+    try testing.expect(read.client_id != null);
+    try testing.expectEqualStrings("test-client", read.client_id.?);
 }
 
-test "compact_arr_size" {
+test "req_header round-trip with null client_id" {
+    var buf: [32]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    const written = RequestHeader{
+        .api_key = .fetch,
+        .api_version = 7,
+        .correlation_id = -1,
+        .client_id = null,
+    };
+    try writer.req_header(&w, written);
+
+    var out: [32]u8 = undefined;
+    var r = Io.Reader.fixed(&buf);
+    const read = try reader.req_header(&r, &out);
+    try testing.expect(read.client_id == null);
+}
+
+test "api_key reads unknown key" {
+    var buf: [32]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    const unsupported_api_key = 255; // not mapped in ApiKey
+    try w.writeInt(i16, unsupported_api_key, BE);
+
+    var r = Io.Reader.fixed(&buf);
+    const read = try reader.api_key(&r);
+    switch (read) {
+        _ => {},
+        else => try testing.expect(false),
+    }
+}
+
+test "produce_req round-trip" {
+    var buf: [64]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    const written = ProduceRequest{
+        .transactional_id = "txn-42",
+        .acks = -1,
+        .timeout_ms = 30_000,
+        .topic_data_size = 3,
+    };
+    try writer.produce_req(&w, written);
+
+    var out: [64]u8 = undefined;
+    var r = Io.Reader.fixed(&buf);
+    const read = try reader.produce_req(&r, &out);
+    try testing.expect(read.transactional_id != null);
+    try testing.expectEqualStrings("txn-42", read.transactional_id.?);
+    try testing.expectEqual(-1, read.acks);
+    try testing.expectEqual(30_000, read.timeout_ms);
+    try testing.expectEqual(3, read.topic_data_size);
+}
+
+test "produce_req round-trip without transactional_id" {
     var buf: [16]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
+    const written = ProduceRequest{
+        .acks = 1,
+        .timeout_ms = 50,
+        .topic_data_size = 2,
+    };
+    try writer.produce_req(&w, written);
 
-    const size: u64 = 7;
-    try writer.unsigned_varint(&w, size + 1);
-
+    var out: [16]u8 = undefined;
     var r = Io.Reader.fixed(&buf);
-    try testing.expectEqual(size, try reader.compact_arr_size(&r));
+    const read = try reader.produce_req(&r, &out);
+    try testing.expect(read.transactional_id == null);
 }
 
-test "unsigned_varint" {
-    try expectVarintBytes(&[_]u8{0x00}, 0);
-    try expectVarintBytes(&[_]u8{0x01}, 1);
-    // largest 1-byte varint
-    try expectVarintBytes(&[_]u8{0x7f}, 127);
-    // smallest 2-byte varint
-    try expectVarintBytes(&[_]u8{ 0x80, 0x01 }, 128);
-    // worked example from the protobuf docs
-    try expectVarintBytes(&[_]u8{ 0x96, 0x01 }, 150);
-    // largest 2-byte varint
-    try expectVarintBytes(&[_]u8{ 0xff, 0x7f }, 16383);
-    // smallest 3-byte varint
-    try expectVarintBytes(&[_]u8{ 0x80, 0x80, 0x01 }, 16384);
-    try expectVarintBytes(
-        &[_]u8{ 0xff, 0xff, 0xff, 0xff, 0x0f },
-        std.math.maxInt(u32),
-    );
-    // largest u64; uses the full 10-byte encoding
-    try expectVarintBytes(
-        &[_]u8{ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01 },
-        std.math.maxInt(u64),
-    );
-}
-
-fn expectVarintBytes(bytes: []const u8, v: u64) !void {
-    var r = Io.Reader.fixed(bytes);
-    try testing.expectEqual(v, try reader.unsigned_varint(&r));
-}
-
-test "unsigned_varint write" {
-    try expectVarintWritten(0, &[_]u8{0x00});
-    try expectVarintWritten(1, &[_]u8{0x01});
-    try expectVarintWritten(127, &[_]u8{0x7f});
-    try expectVarintWritten(128, &[_]u8{ 0x80, 0x01 });
-    try expectVarintWritten(150, &[_]u8{ 0x96, 0x01 });
-    try expectVarintWritten(16383, &[_]u8{ 0xff, 0x7f });
-    try expectVarintWritten(16384, &[_]u8{ 0x80, 0x80, 0x01 });
-    try expectVarintWritten(
-        std.math.maxInt(u32),
-        &[_]u8{ 0xff, 0xff, 0xff, 0xff, 0x0f },
-    );
-    try expectVarintWritten(
-        std.math.maxInt(u64),
-        &[_]u8{ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01 },
-    );
-}
-
-fn expectVarintWritten(v: u64, bytes: []const u8) !void {
-    var buf: [10]u8 = undefined;
+test "partition_data writes count, indices, and records" {
+    var buf: [64]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
-    try writer.unsigned_varint(&w, v);
-    try testing.expectEqualSlices(u8, bytes, w.buffered());
+    const partitions = [_]PartitionData{
+        .{ .index = 1, .records = &[_]u8{ 0xde, 0xad, 0xbe } },
+        .{ .index = 2, .records = null },
+    };
+    try writer.partition_data(&w, &partitions);
+
+    try testing.expectEqualSlices(u8, &[_]u8{
+        0x03, // compact array size: 2 partitions (N+1)
+        0x00, 0x00, 0x00, 0x01, // index 1
+        0x04, 0xde, 0xad, 0xbe, // records: size 3 (N+1) then the bytes
+        0x00, 0x00, 0x00, 0x02, // index 2
+        0x00, // null records
+    }, w.buffered());
 }
 
-test "unsigned_varint stops at varint boundary" {
-    // Bytes following the varint must not be consumed even when their
-    // continuation bit is set.
-    const buf = [_]u8{ 0x96, 0x01, 0xff, 0xff };
-    var r = Io.Reader.fixed(&buf);
-    try testing.expectEqual(@as(u64, 150), try reader.unsigned_varint(&r));
-    try testing.expectEqual(@as(u8, 0xff), try r.takeByte());
-    try testing.expectEqual(@as(u8, 0xff), try r.takeByte());
-}
+test "partition_data writes empty array" {
+    var buf: [16]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    const partitions = [_]PartitionData{};
+    try writer.partition_data(&w, &partitions);
 
-test "unsigned_varint rejects over-long input" {
-    const buf = [_]u8{0xff} ** 11;
-    var r = Io.Reader.fixed(&buf);
-    try testing.expectError(error.ProtocolError, reader.unsigned_varint(&r));
-}
-
-test "unsigned_varint rejects 10th-byte payload overflow" {
-    // Nine continuation bytes followed by a 10th byte whose payload (0x02)
-    // does not fit in the single remaining bit of a u64.
-    const buf = [_]u8{ 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x02 };
-    var r = Io.Reader.fixed(&buf);
-    try testing.expectError(error.ProtocolError, reader.unsigned_varint(&r));
+    // Just the compact array size for zero elements (N+1).
+    try testing.expectEqualSlices(u8, &[_]u8{0x01}, w.buffered());
 }
 
 test "nullable_str round-trip non-null" {
@@ -476,6 +507,17 @@ test "nullable_str rejects too-small buffer" {
     try testing.expectError(error.BufferTooSmall, reader.nullable_str(&r, &out));
 }
 
+test "nullable_str rejects negative length" {
+    // A length below -1 is not a valid null marker and must be rejected.
+    var buf: [16]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    try w.writeInt(i16, -2, BE);
+
+    var out: [16]u8 = undefined;
+    var r = Io.Reader.fixed(&buf);
+    try testing.expectError(error.ProtocolError, reader.nullable_str(&r, &out));
+}
+
 test "compact_nullable_str round-trip" {
     var buf: [64]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
@@ -521,91 +563,77 @@ test "compact_nullable_str rejects too-small buffer" {
     try testing.expectError(error.BufferTooSmall, reader.compact_nullable_str(&r, &out));
 }
 
-test "req_header round-trip with client_id" {
-    var buf: [64]u8 = undefined;
-    var w = Io.Writer.fixed(&buf);
-    const written = RequestHeader{
-        .api_key = .produce,
-        .api_version = 13,
-        .correlation_id = 42,
-        .client_id = "test-client",
-    };
-    try writer.req_header(&w, written);
-
-    var out: [64]u8 = undefined;
-    var r = Io.Reader.fixed(&buf);
-    const read = try reader.req_header(&r, &out);
-    try testing.expectEqual(written.api_key, read.api_key);
-    try testing.expectEqual(written.api_version, read.api_version);
-    try testing.expectEqual(written.correlation_id, read.correlation_id);
-    try testing.expect(read.client_id != null);
-    try testing.expectEqualStrings("test-client", read.client_id.?);
-}
-
-test "req_header round-trip with null client_id" {
-    var buf: [32]u8 = undefined;
-    var w = Io.Writer.fixed(&buf);
-    const written = RequestHeader{
-        .api_key = .fetch,
-        .api_version = 7,
-        .correlation_id = -1,
-        .client_id = null,
-    };
-    try writer.req_header(&w, written);
-
-    var out: [32]u8 = undefined;
-    var r = Io.Reader.fixed(&buf);
-    const read = try reader.req_header(&r, &out);
-    try testing.expect(read.client_id == null);
-}
-
-test "req_header round-trip with unsupported api_key" {
-    var buf: [32]u8 = undefined;
-    var w = Io.Writer.fixed(&buf);
-    const unsupported_api_key = 255; // not mapped in ApiKey
-    try w.writeInt(i16, unsupported_api_key, BE);
-
-    var r = Io.Reader.fixed(&buf);
-    const read = try reader.api_key(&r);
-    switch (read) {
-        _ => {},
-        else => try std.testing.expect(false),
-    }
-}
-
-test "produce_req round-trip" {
-    var buf: [64]u8 = undefined;
-    var w = Io.Writer.fixed(&buf);
-    const written = ProduceRequest{
-        .transactional_id = "txn-42",
-        .acks = -1,
-        .timeout_ms = 30_000,
-        .topic_data_size = 3,
-    };
-    try writer.produce_req(&w, written);
-
-    var out: [64]u8 = undefined;
-    var r = Io.Reader.fixed(&buf);
-    const read = try reader.produce_req(&r, &out);
-    try testing.expect(read.transactional_id != null);
-    try testing.expectEqualStrings("txn-42", read.transactional_id.?);
-    try testing.expectEqual(-1, read.acks);
-    try testing.expectEqual(30_000, read.timeout_ms);
-    try testing.expectEqual(3, read.topic_data_size);
-}
-
-test "produce_req round-trip without transactional_id" {
+test "compact_size round-trip" {
     var buf: [16]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
-    const written = ProduceRequest{
-        .acks = 1,
-        .timeout_ms = 50,
-        .topic_data_size = 2,
-    };
-    try writer.produce_req(&w, written);
 
-    var out: [16]u8 = undefined;
+    const size: u64 = 7;
+    try writer.compact_size(&w, size);
+
     var r = Io.Reader.fixed(&buf);
-    const read = try reader.produce_req(&r, &out);
-    try testing.expect(read.transactional_id == null);
+    try testing.expectEqual(size, try reader.compact_size(&r));
+}
+
+test "compact_size encodes null as zero" {
+    var buf: [16]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    try writer.compact_size(&w, null);
+    try testing.expectEqualSlices(u8, &[_]u8{0x00}, w.buffered());
+}
+
+test "unsigned_varint round-trip" {
+    try expectVarint(0, &[_]u8{0x00});
+    try expectVarint(1, &[_]u8{0x01});
+    // largest 1-byte varint
+    try expectVarint(127, &[_]u8{0x7f});
+    // smallest 2-byte varint
+    try expectVarint(128, &[_]u8{ 0x80, 0x01 });
+    // worked example from the protobuf docs
+    try expectVarint(150, &[_]u8{ 0x96, 0x01 });
+    // largest 2-byte varint
+    try expectVarint(16383, &[_]u8{ 0xff, 0x7f });
+    // smallest 3-byte varint
+    try expectVarint(16384, &[_]u8{ 0x80, 0x80, 0x01 });
+    try expectVarint(std.math.maxInt(u32), &[_]u8{ 0xff, 0xff, 0xff, 0xff, 0x0f });
+    // largest u64; uses the full 10-byte encoding
+    try expectVarint(
+        std.math.maxInt(u64),
+        &[_]u8{ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01 },
+    );
+}
+
+/// Asserts `encoded` decodes to `v` and that `v` re-encodes to `encoded`,
+/// pinning the exact wire bytes in both directions.
+fn expectVarint(v: u64, encoded: []const u8) !void {
+    var r = Io.Reader.fixed(encoded);
+    try testing.expectEqual(v, try reader.unsigned_varint(&r));
+
+    var buf: [10]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    try writer.unsigned_varint(&w, v);
+    try testing.expectEqualSlices(u8, encoded, w.buffered());
+}
+
+test "unsigned_varint stops at varint boundary" {
+    // Bytes following the varint must not be consumed even when their
+    // continuation bit is set.
+    const buf = [_]u8{ 0x96, 0x01, 0xff, 0xff };
+    var r = Io.Reader.fixed(&buf);
+    try testing.expectEqual(@as(u64, 150), try reader.unsigned_varint(&r));
+    try testing.expectEqual(@as(u8, 0xff), try r.takeByte());
+    try testing.expectEqual(@as(u8, 0xff), try r.takeByte());
+}
+
+test "unsigned_varint rejects over-long input" {
+    const buf = [_]u8{0xff} ** 11;
+    var r = Io.Reader.fixed(&buf);
+    try testing.expectError(error.ProtocolError, reader.unsigned_varint(&r));
+}
+
+test "unsigned_varint rejects 10th-byte payload overflow" {
+    // Nine continuation bytes followed by a 10th byte whose payload (0x02)
+    // does not fit in the single remaining bit of a u64.
+    const buf = [_]u8{ 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x02 };
+    var r = Io.Reader.fixed(&buf);
+    try testing.expectError(error.ProtocolError, reader.unsigned_varint(&r));
 }

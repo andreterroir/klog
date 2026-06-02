@@ -32,6 +32,8 @@ Sources live at the repo root, not under `src/`:
 - Unit tests live next to the code they cover, in the same file via Zig's
   `test` blocks. Only `protocol.zig` is wired into the `test` step today;
   add new test sources to `build.zig` when you create them.
+- Keep test order matching implementation order, the same way paired
+  reader/writer parser functions mirror each other's order.
 
 ## Keeping this file current
 
@@ -43,4 +45,5 @@ here wrong, the change is incomplete until this file matches.
 ## Pull requests
 
 If later commits invalidate the PR's title or description, update them to
-match the final diff before asking for review.
+match the final diff before asking for review. (Never leave the PR
+description empty — summarize what changed and why.)
