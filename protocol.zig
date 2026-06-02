@@ -71,9 +71,10 @@ pub const PartitionData = struct {
     records: ?[]const u8, // ?[]Record,
 };
 
-/// The fixed part of a topic_data entry, read up front so the partitions
-/// can be streamed one at a time without buffering the whole entry. The
-/// topic array length itself lives in `ProduceRequest.topic_data_size`.
+/// The fixed part of a topic_data entry, handled up front so the
+/// partitions can be streamed one at a time without buffering the whole
+/// entry. The topic array length itself lives in
+/// `ProduceRequest.topic_data_size`.
 pub const Topic = struct {
     topic_id: [16]u8, // UUID
     /// The number of partition_data entries that follow.
@@ -318,9 +319,9 @@ pub const writer = struct {
     /// by the partition_data array length. Each of the `partition_count`
     /// partitions is then written with `partition_data`. The topic array
     /// length itself is written by `produce_req` (topic_data_size).
-    pub fn topic_data(w: *Io.Writer, topic_id: [16]u8, partition_count: u64) !void {
-        try w.writeAll(&topic_id);
-        try compact_size(w, partition_count);
+    pub fn topic_data(w: *Io.Writer, topic: Topic) !void {
+        try w.writeAll(&topic.topic_id);
+        try compact_size(w, topic.partition_count);
     }
 
     /// Writes one partition_data entry: the index followed by its
@@ -491,7 +492,7 @@ test "topic_data round-trip" {
     var buf: [32]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
     const topic_id = [16]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
-    try writer.topic_data(&w, topic_id, 2);
+    try writer.topic_data(&w, .{ .topic_id = topic_id, .partition_count = 2 });
 
     var r = Io.Reader.fixed(&buf);
     const read = try reader.topic_data(&r);
@@ -503,7 +504,7 @@ test "topic_data round-trip with no partitions" {
     var buf: [32]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
     const topic_id = [_]u8{0xab} ** 16;
-    try writer.topic_data(&w, topic_id, 0);
+    try writer.topic_data(&w, .{ .topic_id = topic_id, .partition_count = 0 });
 
     var r = Io.Reader.fixed(&buf);
     const read = try reader.topic_data(&r);

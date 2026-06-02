@@ -25,21 +25,42 @@ pub fn main(init: std.process.Init) !void {
         .client_id = "test-client",
     };
     try writer.req_header(io_writer, req_header);
+
+    // Example data: topic one with a single partition, topic two with two.
+    const topic1_uuid = [_]u8{0x11} ** 16;
+    const topic2_uuid = [_]u8{0x22} ** 16;
+    const topics = [_]proto.TopicData{
+        .{
+            .topic_id = topic1_uuid,
+            .partition_data = &.{
+                .{ .index = 0, .records = &[_]u8{ 0xca, 0xfe, 0xba, 0xbe } },
+            },
+        },
+        .{
+            .topic_id = topic2_uuid,
+            .partition_data = &.{
+                .{ .index = 0, .records = &[_]u8{ 0xde, 0xad, 0xbe, 0xef } },
+                .{ .index = 1, .records = &[_]u8{ 0x01, 0x02, 0x03 } },
+            },
+        },
+    };
+
     const req = proto.ProduceRequest{
         .acks = -1, // ISR
         .timeout_ms = 1000,
-        .topic_data_size = 2,
+        .topic_data_size = topics.len,
     };
     try writer.produce_req(io_writer, req);
 
-    // Topic one: a single partition.
-    const topic_one = [_]u8{0x11} ** 16;
-    try writer.topic_data(io_writer, topic_one, 1);
-    try writer.partition_data(io_writer, .{ .index = 0, .records = &[_]u8{ 0xca, 0xfe, 0xba, 0xbe } });
-
-    // Topic two: two partitions.
-    const topic_two = [_]u8{0x22} ** 16;
-    try writer.topic_data(io_writer, topic_two, 2);
-    try writer.partition_data(io_writer, .{ .index = 0, .records = &[_]u8{ 0xde, 0xad, 0xbe, 0xef } });
-    try writer.partition_data(io_writer, .{ .index = 1, .records = &[_]u8{ 0x01, 0x02, 0x03 } });
+    // Write each topic header followed by its partitions, mirroring how the
+    // server streams them back out.
+    for (topics) |topic| {
+        try writer.topic_data(io_writer, .{
+            .topic_id = topic.topic_id,
+            .partition_count = topic.partition_data.len,
+        });
+        for (topic.partition_data) |partition| {
+            try writer.partition_data(io_writer, partition);
+        }
+    }
 }
