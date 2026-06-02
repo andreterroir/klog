@@ -286,12 +286,12 @@ pub const writer = struct {
         for (arr) |partition| {
             try w.writeInt(i32, partition.index, BE);
             // records => COMPACT_NULLABLE_RECORDS: length N+1 then N bytes,
-            // or a 0 varint for null.
+            // or 0 for null.
             if (partition.records) |records| {
                 try compact_size(w, records.len);
                 try w.writeAll(records);
             } else {
-                try unsigned_varint(w, 0);
+                try compact_size(w, null);
             }
         }
     }
@@ -308,20 +308,24 @@ pub const writer = struct {
 
     fn compact_nullable_str(w: *Io.Writer, str: ?[]const u8) !void {
         if (str) |s| {
-            try unsigned_varint(w, @as(u64, s.len) + 1);
+            try compact_size(w, s.len);
             try w.writeAll(s);
         } else {
-            try unsigned_varint(w, 0);
+            try compact_size(w, null);
         }
     }
 
-    /// Writes the length N of a COMPACT array as N+1 in an unsigned varint.
-    /// The same length-prefix scheme applies to non-null compact byte
-    /// sequences (the N bytes follow). The produce request's COMPACT arrays
-    /// — topic_data and partition_data — are non-nullable; only records are
-    /// nullable and encode null as a 0 varint inline (see partition_data).
-    fn compact_size(w: *Io.Writer, size: u64) !void {
-        try unsigned_varint(w, size + 1);
+    /// Writes a compact length N as N+1 in an unsigned varint, or 0 for a
+    /// null value. The N bytes/elements follow for non-null values. The
+    /// produce request's COMPACT arrays — topic_data and partition_data —
+    /// are non-nullable and always pass a length; nullable compact strings
+    /// and records pass null to encode their null form.
+    fn compact_size(w: *Io.Writer, size: ?u64) !void {
+        if (size) |s| {
+            try unsigned_varint(w, s + 1);
+        } else {
+            try unsigned_varint(w, 0);
+        }
     }
 
     /// Unsigned LEB128, as used by Protocol Buffers.
@@ -617,6 +621,13 @@ test "compact_size round-trip" {
 
     var r = Io.Reader.fixed(&buf);
     try testing.expectEqual(size, try reader.compact_size(&r));
+}
+
+test "compact_size encodes null as zero" {
+    var buf: [16]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    try writer.compact_size(&w, null);
+    try testing.expectEqualSlices(u8, &[_]u8{0x00}, w.buffered());
 }
 
 test "unsigned_varint round-trip" {
