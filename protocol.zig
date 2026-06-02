@@ -532,7 +532,6 @@ test "produce_req round-trip without transactional_id" {
     var buf: [16]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
     const written = ProduceRequest{
-        .transactional_id = null,
         .acks = 0,
         .timeout_ms = 0,
     };
