@@ -269,6 +269,13 @@ pub const writer = struct {
         try unsigned_varint(w, req.topic_data_size + 1);
     }
 
+    /// topic_data => topic_id (partition_data)
+    /// Writes the 16-byte UUID followed by the COMPACT array of partition_data.
+    pub fn topic_data(w: *Io.Writer, td: TopicData) !void {
+        try w.writeAll(&td.topic_id);
+        try partition_data(w, td.partition_data);
+    }
+
     /// Writes a COMPACT array of partition_data: the element count as a
     /// compact array size, followed by each { index records } entry.
     fn partition_data(w: *Io.Writer, arr: []const PartitionData) !void {
@@ -432,6 +439,43 @@ test "produce_req round-trip without transactional_id" {
     var r = Io.Reader.fixed(&buf);
     const read = try reader.produce_req(&r, &out);
     try testing.expect(read.transactional_id == null);
+}
+
+test "topic_data writes topic_id and partition_data" {
+    var buf: [64]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    const td = TopicData{
+        .topic_id = .{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 },
+        .partition_data = &[_]PartitionData{
+            .{ .index = 1, .records = &[_]u8{ 0xde, 0xad, 0xbe } },
+            .{ .index = 2, .records = null },
+        },
+    };
+    try writer.topic_data(&w, td);
+
+    try testing.expectEqualSlices(u8, &[_]u8{
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, // topic_id UUID
+        0x03, // compact array size: 2 partitions (N+1)
+        0x00, 0x00, 0x00, 0x01, // index 1
+        0x04, 0xde, 0xad, 0xbe, // records: size 3 (N+1) then the bytes
+        0x00, 0x00, 0x00, 0x02, // index 2
+        0x00, // null records
+    }, w.buffered());
+}
+
+test "topic_data writes empty partition_data" {
+    var buf: [32]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    const td = TopicData{
+        .topic_id = .{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 },
+        .partition_data = &[_]PartitionData{},
+    };
+    try writer.topic_data(&w, td);
+
+    try testing.expectEqualSlices(u8, &[_]u8{
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, // topic_id UUID
+        0x01, // compact array size for zero partitions (N+1)
+    }, w.buffered());
 }
 
 test "partition_data writes count, indices, and records" {
