@@ -55,6 +55,6 @@ pub fn main(init: std.process.Init) !void {
 /// the bytes always agree.
 fn write_partition(w: *std.Io.Writer, index: i32, records: ?[]const u8) !void {
     try proto.writer.partition_data(w, .{ .index = index });
-    try proto.writer.compact_size(w, u8, records);
+    try proto.writer.compact_size(w, records);
     if (records) |r| try w.writeAll(r);
 }

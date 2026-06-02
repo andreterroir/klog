@@ -333,16 +333,16 @@ pub const writer = struct {
     }
 
     fn compact_nullable_str(w: *Io.Writer, str: ?[]const u8) !void {
-        try compact_size(w, u8, str);
+        try compact_size(w, str);
         if (str) |s| try w.writeAll(s);
     }
 
     /// Writes the length N of a COMPACT array as N+1 in an UNSIGNED_VARINT,
-    /// or 0 for a null array (the COMPACT_NULLABLE null marker). Generic
-    /// over the element type T: pass the slice itself — e.g. a partition's
-    /// records bytes or a compact string — rather than a precomputed count.
-    /// The caller writes the N elements/bytes afterwards for non-null values.
-    pub fn compact_size(w: *Io.Writer, comptime T: type, arr: ?[]const T) !void {
+    /// or 0 for a null array (the COMPACT_NULLABLE null marker). Pass the
+    /// slice itself — e.g. a partition's records bytes or a compact string —
+    /// rather than a precomputed count. The caller writes the N bytes
+    /// afterwards for non-null values.
+    pub fn compact_size(w: *Io.Writer, arr: ?[]const u8) !void {
         if (arr) |a| {
             try unsigned_varint(w, a.len + 1);
         } else {
@@ -500,7 +500,7 @@ test "partition round-trip with records" {
     const records = [_]u8{ 0xde, 0xad, 0xbe };
     // index, then the records as a length prefix followed by the bytes.
     try writer.partition_data(&w, .{ .index = 1 });
-    try writer.compact_size(&w, u8, &records);
+    try writer.compact_size(&w, &records);
     try w.writeAll(&records);
 
     var r = Io.Reader.fixed(&buf);
@@ -517,7 +517,7 @@ test "partition round-trip with null records" {
     var buf: [16]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
     try writer.partition_data(&w, .{ .index = 2 });
-    try writer.compact_size(&w, u8, null);
+    try writer.compact_size(&w, null);
 
     var r = Io.Reader.fixed(&buf);
     const read = try reader.partition_data(&r);
@@ -632,7 +632,7 @@ test "compact_size round-trip" {
 
     // compact_size takes the slice and writes its length; here that is 7.
     const arr = [_]u8{0} ** 7;
-    try writer.compact_size(&w, u8, &arr);
+    try writer.compact_size(&w, &arr);
 
     var r = Io.Reader.fixed(&buf);
     try testing.expectEqual(arr.len, try reader.compact_size(&r));
@@ -641,7 +641,7 @@ test "compact_size round-trip" {
 test "compact_size round-trip null" {
     var buf: [16]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
-    try writer.compact_size(&w, u8, null);
+    try writer.compact_size(&w, null);
 
     var r = Io.Reader.fixed(&buf);
     try testing.expectEqual(null, try reader.compact_size(&r));
@@ -650,7 +650,7 @@ test "compact_size round-trip null" {
 test "compact_size encodes null as zero" {
     var buf: [16]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
-    try writer.compact_size(&w, u8, null);
+    try writer.compact_size(&w, null);
     try testing.expectEqualSlices(u8, &[_]u8{0x00}, w.buffered());
 }
 
