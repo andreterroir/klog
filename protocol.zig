@@ -305,7 +305,8 @@ pub const writer = struct {
         try compact_nullable_str(w, req.transactional_id);
         try w.writeInt(i16, req.acks, BE);
         try w.writeInt(i32, req.timeout_ms, BE);
-        try unsigned_varint(w, req.topic_data_size + 1);
+        // topic_data is a non-nullable COMPACT array; the count writes as N+1.
+        try compact_size(w, req.topic_data_size);
     }
 
     /// Writes one topic_data entry's fixed part: the topic_id UUID followed
@@ -314,9 +315,8 @@ pub const writer = struct {
     /// length itself is written by `produce_req` (topic_data_size).
     pub fn topic_data(w: *Io.Writer, topic: TopicData) !void {
         try w.writeAll(&topic.topic_id);
-        // partition_data is a non-nullable COMPACT array; write its length
-        // directly as N+1, the same way produce_req writes topic_data_size.
-        try unsigned_varint(w, topic.partition_data_size + 1);
+        // partition_data is a non-nullable COMPACT array, like topic_data_size.
+        try compact_size(w, topic.partition_data_size);
     }
 
     /// Writes one partition_data entry's fixed part: the partition index and
@@ -325,13 +325,9 @@ pub const writer = struct {
     /// reads the index and length and leaves the records for the caller.
     pub fn partition_data(w: *Io.Writer, partition: PartitionData) !void {
         try w.writeInt(i32, partition.index, BE);
-        // records is a COMPACT_NULLABLE byte sequence; write its length as
-        // N+1, or 0 for the null marker. The bytes follow, written by the caller.
-        if (partition.records_size) |n| {
-            try unsigned_varint(w, n + 1);
-        } else {
-            try unsigned_varint(w, 0);
-        }
+        // records is a COMPACT_NULLABLE byte sequence; its bytes follow,
+        // written by the caller.
+        try compact_size(w, partition.records_size);
     }
 
     fn nullable_str(w: *Io.Writer, str: ?[]const u8) !void {
@@ -345,20 +341,30 @@ pub const writer = struct {
     }
 
     fn compact_nullable_str(w: *Io.Writer, str: ?[]const u8) !void {
-        try compact_size(w, str);
+        try compact_size_of(w, str);
         if (str) |s| try w.writeAll(s);
     }
 
     /// Writes the length N of a COMPACT array as N+1 in an UNSIGNED_VARINT,
-    /// or 0 for a null array (the COMPACT_NULLABLE null marker). Pass the
-    /// slice itself — e.g. a compact string — rather than a precomputed
-    /// count. The caller writes the N bytes afterwards for non-null values.
-    pub fn compact_size(w: *Io.Writer, arr: ?[]const u8) !void {
-        if (arr) |a| {
-            try unsigned_varint(w, a.len + 1);
+    /// or 0 for null — the COMPACT_NULLABLE null marker. The inverse of the
+    /// reader's `compact_size`, which turns the same encoding back into
+    /// `?u64`. Non-nullable callers pass the count directly (it coerces to
+    /// the optional and never writes the null marker). The caller writes the
+    /// N elements/bytes afterwards.
+    pub fn compact_size(w: *Io.Writer, len: ?u64) !void {
+        if (len) |n| {
+            try unsigned_varint(w, n + 1);
         } else {
             try unsigned_varint(w, 0);
         }
+    }
+
+    /// Writes the COMPACT_NULLABLE length prefix of a (possibly null) slice,
+    /// deferring to `compact_size`. Pass the slice itself — e.g. a compact
+    /// string or a partition's records — rather than a precomputed count.
+    pub fn compact_size_of(w: *Io.Writer, arr: ?[]const u8) !void {
+        const len: ?u64 = if (arr) |a| @intCast(a.len) else null;
+        try compact_size(w, len);
     }
 
     /// Unsigned LEB128, as used by Protocol Buffers.
@@ -638,10 +644,19 @@ test "compact_nullable_str rejects too-small buffer" {
 test "compact_size round-trip" {
     var buf: [16]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
+    try writer.compact_size(&w, 7);
 
-    // compact_size takes the slice and writes its length; here that is 7.
+    var r = Io.Reader.fixed(&buf);
+    try testing.expectEqual(7, try reader.compact_size(&r));
+}
+
+test "compact_size_of round-trip" {
+    var buf: [16]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+
+    // compact_size_of takes the slice and writes its length; here that is 7.
     const arr = [_]u8{0} ** 7;
-    try writer.compact_size(&w, &arr);
+    try writer.compact_size_of(&w, &arr);
 
     var r = Io.Reader.fixed(&buf);
     try testing.expectEqual(arr.len, try reader.compact_size(&r));
