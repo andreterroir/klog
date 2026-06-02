@@ -377,7 +377,7 @@ test "msg_size round-trip" {
     try writer.msg_size(&w, 1024);
 
     var r = Io.Reader.fixed(&buf);
-    try testing.expectEqual(@as(i32, 1024), try reader.msg_size(&r));
+    try testing.expectEqual(1024, try reader.msg_size(&r));
 }
 
 test "msg_size round-trip zero" {
@@ -386,7 +386,7 @@ test "msg_size round-trip zero" {
     try writer.msg_size(&w, 0);
 
     var r = Io.Reader.fixed(&buf);
-    try testing.expectEqual(@as(i32, 0), try reader.msg_size(&r));
+    try testing.expectEqual(0, try reader.msg_size(&r));
 }
 
 test "req_header round-trip with client_id" {
@@ -487,7 +487,7 @@ test "topic_data round-trip" {
     var r = Io.Reader.fixed(&buf);
     const read = try reader.topic_data(&r);
     try testing.expectEqualSlices(u8, &topic_id, &read.topic_id);
-    try testing.expectEqual(@as(u64, 2), read.partition_count);
+    try testing.expectEqual(2, read.partition_count);
 }
 
 test "topic_data round-trip with no partitions" {
@@ -499,7 +499,7 @@ test "topic_data round-trip with no partitions" {
     var r = Io.Reader.fixed(&buf);
     const read = try reader.topic_data(&r);
     try testing.expectEqualSlices(u8, &topic_id, &read.topic_id);
-    try testing.expectEqual(@as(u64, 0), read.partition_count);
+    try testing.expectEqual(0, read.partition_count);
 }
 
 test "partition_data round-trip with records" {
@@ -512,8 +512,8 @@ test "partition_data round-trip with records" {
 
     var r = Io.Reader.fixed(&buf);
     const read = try reader.partition_data(&r);
-    try testing.expectEqual(@as(i32, 1), read.index);
-    try testing.expectEqual(@as(?u64, records.len), read.records_size);
+    try testing.expectEqual(1, read.index);
+    try testing.expectEqual(records.len, read.records_size);
     // The record bytes are left in the stream for the caller to consume.
     var out: [3]u8 = undefined;
     try r.readSliceAll(&out);
@@ -527,8 +527,8 @@ test "partition_data round-trip with null records" {
 
     var r = Io.Reader.fixed(&buf);
     const read = try reader.partition_data(&r);
-    try testing.expectEqual(@as(i32, 2), read.index);
-    try testing.expectEqual(@as(?u64, null), read.records_size);
+    try testing.expectEqual(2, read.index);
+    try testing.expectEqual(null, read.records_size);
 }
 
 test "nullable_str round-trip non-null" {
@@ -688,9 +688,9 @@ test "unsigned_varint stops at varint boundary" {
     // continuation bit is set.
     const buf = [_]u8{ 0x96, 0x01, 0xff, 0xff };
     var r = Io.Reader.fixed(&buf);
-    try testing.expectEqual(@as(u64, 150), try reader.unsigned_varint(&r));
-    try testing.expectEqual(@as(u8, 0xff), try r.takeByte());
-    try testing.expectEqual(@as(u8, 0xff), try r.takeByte());
+    try testing.expectEqual(150, try reader.unsigned_varint(&r));
+    try testing.expectEqual(0xff, try r.takeByte());
+    try testing.expectEqual(0xff, try r.takeByte());
 }
 
 test "unsigned_varint rejects over-long input" {
