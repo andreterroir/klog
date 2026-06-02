@@ -42,8 +42,14 @@ pub const ResponseHeader = struct {};
 ///       index => INT32
 ///       records => COMPACT_NULLABLE_RECORDS
 pub const ProduceRequest = struct {
+    /// The transactional ID, or null if the producer is not
+    /// transactional.
     transactional_id: ?[]const u8 = null,
+    /// The number of acknowledgments the producer requires the leader to have
+    /// received before considering a request complete. Allowed values: 0 for no
+    /// acknowledgments, 1 for only the leader and -1 for the full ISR.
     acks: i16,
+    /// The timeout to await a response in milliseconds.
     timeout_ms: i32,
 };
 
@@ -182,9 +188,9 @@ pub const reader = struct {
     }
 
     /// COMPACT_NULLABLE_STRING Represents a sequence of characters.
-    //First the length N + 1 is given as an UNSIGNED_VARINT . Then N
-    //bytes follow which are the UTF-8 encoding of the character
-    //sequence. A null string is represented with a length of 0.
+    /// First the length N + 1 is given as an UNSIGNED_VARINT . Then N
+    /// bytes follow which are the UTF-8 encoding of the character
+    /// sequence. A null string is represented with a length of 0.
     fn compact_nullable_str(r: *Io.Reader, buf: []u8) !?[]u8 {
         const len = try unsigned_varint(r);
         if (len == 0) return null;
@@ -537,4 +543,3 @@ test "produce_req round-trip without transactional_id" {
     const read = try reader.produce_req(&r, &out);
     try testing.expect(read.transactional_id == null);
 }
-
