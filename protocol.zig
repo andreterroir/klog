@@ -279,8 +279,6 @@ pub const writer = struct {
         for (arr) |partition| {
             try w.writeInt(i32, partition.index, BE);
             if (partition.records) |records| {
-                // COMPACT_NULLABLE_RECORDS: length N+1 as an unsigned varint
-                // followed by the N raw record-batch bytes.
                 try compact_arr_size(w, records.len);
                 try w.writeAll(records);
             } else {
@@ -308,6 +306,9 @@ pub const writer = struct {
         }
     }
 
+    /// Writes a COMPACT array size: length N+1 as an unsigned varint, or 0
+    /// for a null array. Also the length prefix for COMPACT_NULLABLE_RECORDS,
+    /// where the N raw record-batch bytes follow.
     fn compact_arr_size(w: *Io.Writer, size: ?u64) !void {
         if (size) |s| {
             try unsigned_varint(w, s + 1);
