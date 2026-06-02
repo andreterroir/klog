@@ -159,6 +159,10 @@ pub const reader = struct {
         };
     }
 
+    fn api_key(r: *Io.Reader) !ApiKey {
+        return @enumFromInt(try r.takeInt(i16, BE));
+    }
+
     /// buf has to be large enough to hold transactional_id.
     pub fn produce_req(r: *Io.Reader, buf: []u8) !ProduceRequest {
         return .{
@@ -166,10 +170,6 @@ pub const reader = struct {
             .acks = try r.takeInt(i16, BE),
             .timeout_ms = try r.takeInt(i32, BE),
         };
-    }
-
-    fn api_key(r: *Io.Reader) !ApiKey {
-        return @enumFromInt(try r.takeInt(i16, BE));
     }
 
     /// NULLABLE_STRING
