@@ -299,7 +299,7 @@ pub const writer = struct {
 
     fn compact_arr_size(w: *Io.Writer, size: ?u64) !void {
         if (size) |s| {
-            try unsigned_varint(w, s);
+            try unsigned_varint(w, s + 1);
         } else {
             try unsigned_varint(w, 0);
         }
@@ -526,15 +526,22 @@ test "compact_nullable_str rejects too-small buffer" {
     try testing.expectError(error.BufferTooSmall, reader.compact_nullable_str(&r, &out));
 }
 
-test "compact_arr_size" {
+test "compact_arr_size round-trip" {
     var buf: [16]u8 = undefined;
     var w = Io.Writer.fixed(&buf);
 
     const size: u64 = 7;
-    try writer.unsigned_varint(&w, size + 1);
+    try writer.compact_arr_size(&w, size);
 
     var r = Io.Reader.fixed(&buf);
     try testing.expectEqual(size, try reader.compact_arr_size(&r));
+}
+
+test "compact_arr_size encodes null as zero" {
+    var buf: [16]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    try writer.compact_arr_size(&w, null);
+    try testing.expectEqualSlices(u8, &[_]u8{0x00}, w.buffered());
 }
 
 test "unsigned_varint read" {
