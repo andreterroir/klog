@@ -7,8 +7,18 @@ const proto = @import("protocol");
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
-    const addr = try net.IpAddress.parse("::1", 8080);
-    var server = try addr.listen(io, .{ .reuse_address = true });
+    const port = 8080;
+    // Bind the IPv6 wildcard, which on dual-stack hosts also accepts IPv4
+    // clients (IPv4-mapped addresses). Fall back to the IPv4 wildcard on hosts
+    // without an IPv6 stack.
+    var addr: net.IpAddress = .{ .ip6 = .unspecified(port) };
+    var server = addr.listen(io, .{ .reuse_address = true }) catch |err| switch (err) {
+        error.AddressFamilyUnsupported => blk: {
+            addr = .{ .ip4 = .unspecified(port) };
+            break :blk try addr.listen(io, .{ .reuse_address = true });
+        },
+        else => return err,
+    };
     defer server.deinit(io);
     log.info("started server at {f}", .{addr});
 

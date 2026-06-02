@@ -8,10 +8,13 @@ pub fn main(init: std.process.Init) !void {
     const writer = proto.writer;
 
     const io = init.io;
-    const addr = try net.IpAddress.parse("::1", 8080);
-    var stream = try addr.connect(io, .{ .mode = .stream });
+    // Resolve the host name and connect, letting the standard library race
+    // IPv6 and IPv4 candidates (Happy Eyeballs). On dual-stack hosts IPv6 is
+    // attempted first; IPv4-only hosts fall back transparently.
+    const host = try net.HostName.init("localhost");
+    var stream = try host.connect(io, 8080, .{ .mode = .stream });
     defer stream.close(io);
-    log.info("connected to {f}", .{addr});
+    log.info("connected to {s}", .{host.bytes});
 
     // unbuffered writer
     var stream_writer = stream.writer(io, &.{});
