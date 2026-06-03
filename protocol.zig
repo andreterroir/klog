@@ -39,6 +39,9 @@ pub const RequestHeader = struct {
 //  correlation_id => INT32
 pub const ResponseHeader = struct {};
 
+// TODO support tagged struct fields
+// https://cwiki.apache.org/confluence/pages/viewpage.action?pageId=120722234#KIP482:TheKafkaProtocolshouldSupportOptionalTaggedFields-TagHeaders
+
 /// Represents the fixed part of the Produce API request.
 /// The trailing topic_data array is read separately and not part of this struct.
 ///
