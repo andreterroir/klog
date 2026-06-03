@@ -28,6 +28,10 @@ pub const RequestHeader = struct {
     api_key: ApiKey,
     api_version: i16,
     correlation_id: i32,
+    // Unlike proposed in the KIP, client ID is a strring rather than a compact
+    // string for compatibility reasons.
+    // https://cwiki.apache.org/confluence/display/KAFKA/KIP-482%3A+The+Kafka+Protocol+should+Support+Optional+Tagged+Fields#KIP482:TheKafkaProtocolshouldSupportOptionalTaggedFields-FlexibleVersions
+    // https://github.com/apache/kafka/blob/9956b49816deb77e5d022f2a42505bd9cfe23fc9/clients/src/main/resources/common/message/RequestHeader.json#L36-L40
     client_id: ?[]const u8,
 };
 
