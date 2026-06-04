@@ -49,19 +49,19 @@ fn respond(io: Io, io_reader: *Io.Reader, stream: net.Stream) !void {
     log.debug("request header: {}", .{req_header});
     log.debug("request API key: {}", .{req_header.api_key});
 
-    const stream_writer = stream.writer(io, &.{});
-    _ = stream_writer;
+    var wbuf: [1024]u8 = undefined;
+    var stream_writer = stream.writer(io, &wbuf);
+    const io_writer = &stream_writer.interface;
 
     try switch (req_header.api_key) {
-        .produce => produce(io, io_reader, stream),
+        .produce => produce(io_reader, io_writer, req_header.correlation_id),
         else => std.log.err("unsupported API: {}", .{req_header.api_key}),
     };
+
+    try io_writer.flush();
 }
 
-fn produce(io: Io, io_reader: *Io.Reader, stream: Io.net.Stream) !void {
-    _ = stream;
-    _ = io;
-
+fn produce(io_reader: *Io.Reader, io_writer: *Io.Writer, correlation_id: i32) !void {
     const reader = proto.reader;
 
     const max_transactional_id = 1024;
@@ -79,6 +79,35 @@ fn produce(io: Io, io_reader: *Io.Reader, stream: Io.net.Stream) !void {
             try log_records(io_reader, partition.index, partition.records_size);
         }
     }
+
+    const writer = proto.writer;
+
+    // Reply with a placeholder success response. The request's topics were
+    // streamed and not retained, so the response uses an example topic_id and
+    // a single successful partition. Unlike the request, the response carries
+    // only small metadata, so it is built as one struct and written at once.
+    // msg_size is a placeholder 0, matching how the request prefixes its size.
+    try writer.msg_size(io_writer, 0);
+    try writer.resp_header(io_writer, .{ .correlation_id = correlation_id });
+    try writer.produce_resp(io_writer, .{
+        .responses = &.{
+            .{
+                .topic_id = [_]u8{0xaa} ** 16,
+                .partition_responses = &.{
+                    .{
+                        .index = 0,
+                        .error_code = 0,
+                        .base_offset = 0,
+                        .log_append_time_ms = -1,
+                        .log_start_offset = 0,
+                        .record_errors = &.{},
+                        .error_message = null,
+                    },
+                },
+            },
+        },
+        .throttle_time_ms = 0,
+    });
 }
 
 /// Logs a partition's records, consuming them from the stream in

@@ -50,6 +50,42 @@ pub fn main(init: std.process.Init) !void {
     try write_partition(io_writer, 0, null);
     try write_partition(io_writer, 1, &[_]u8{ 0xde, 0xad, 0xbe, 0xef });
     try write_partition(io_writer, 2, &[_]u8{ 0xfe, 0xed, 0xfa, 0xce });
+    try io_writer.flush();
+
+    // Read the response the server sends back. Unlike the request, the produce
+    // response carries only small metadata, so it is read at once into a single
+    // nested structure. An arena backs that structure and frees it all at once.
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const gpa = arena.allocator();
+
+    const reader = proto.reader;
+    var rbuf: [1024]u8 = undefined;
+    var stream_reader = stream.reader(io, &rbuf);
+    const io_reader = &stream_reader.interface;
+
+    const resp_size = try reader.msg_size(io_reader);
+    log.info("response size: {d} bytes", .{resp_size});
+    const resp_header = try reader.resp_header(io_reader);
+    log.info("response correlation_id: {d}", .{resp_header.correlation_id});
+
+    const resp = try reader.produce_resp(io_reader, gpa);
+    log.info("produce response: {d} topic(s), throttle {d}ms", .{
+        resp.responses.len,
+        resp.throttle_time_ms,
+    });
+    for (resp.responses) |topic| {
+        log.info("topic {x}: {d} partition response(s)", .{
+            topic.topic_id,
+            topic.partition_responses.len,
+        });
+        for (topic.partition_responses) |p| {
+            log.info(
+                "  partition {d}: error_code={d} base_offset={d} log_append_time_ms={d} log_start_offset={d} record_errors={d} error_message={?s}",
+                .{ p.index, p.error_code, p.base_offset, p.log_append_time_ms, p.log_start_offset, p.record_errors.len, p.error_message },
+            );
+        }
+    }
 }
 
 /// Writes a partition_data entry: the index and records length prefix (both
