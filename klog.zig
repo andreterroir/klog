@@ -49,19 +49,19 @@ fn respond(io: Io, io_reader: *Io.Reader, stream: net.Stream) !void {
     log.debug("request header: {}", .{req_header});
     log.debug("request API key: {}", .{req_header.api_key});
 
-    const stream_writer = stream.writer(io, &.{});
-    _ = stream_writer;
+    var wbuf: [1024]u8 = undefined;
+    var stream_writer = stream.writer(io, &wbuf);
+    const io_writer = &stream_writer.interface;
 
     try switch (req_header.api_key) {
-        .produce => produce(io, io_reader, stream),
+        .produce => produce(io_reader, io_writer, req_header.correlation_id),
         else => std.log.err("unsupported API: {}", .{req_header.api_key}),
     };
+
+    try io_writer.flush();
 }
 
-fn produce(io: Io, io_reader: *Io.Reader, stream: Io.net.Stream) !void {
-    _ = stream;
-    _ = io;
-
+fn produce(io_reader: *Io.Reader, io_writer: *Io.Writer, correlation_id: i32) !void {
     const reader = proto.reader;
 
     const max_transactional_id = 1024;
@@ -69,16 +69,51 @@ fn produce(io: Io, io_reader: *Io.Reader, stream: Io.net.Stream) !void {
     const req = try reader.produce_req(io_reader, &buf);
     log.debug("produce request: {}", .{req});
 
+    // The response echoes the request's topic_ids and partition indices, so
+    // collect that small metadata while streaming the request. Only the record
+    // bytes are large; they are still drained a chunk at a time and never kept
+    // in memory. An arena holds the response tree until it is written below.
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const gpa = arena.allocator();
+
     // Read the topic_data array one entry at a time, using the counts and
     // sizes that prefix each level rather than buffering the whole request.
-    for (0..req.topic_data_size) |_| {
+    const responses = try gpa.alloc(proto.TopicResponse, @intCast(req.topic_data_size));
+    for (responses) |*resp| {
         const topic = try reader.topic_data(io_reader);
         log.info("topic {x}: {d} partition(s)", .{ topic.topic_id, topic.partition_data_size });
-        for (0..topic.partition_data_size) |_| {
+        const partitions = try gpa.alloc(proto.PartitionResponse, @intCast(topic.partition_data_size));
+        for (partitions) |*p| {
             const partition = try reader.partition_data(io_reader);
             try log_records(io_reader, partition.index, partition.records_size);
+            // index is taken from the request; the rest are example results a
+            // real broker would fill in after persisting the records.
+            p.* = .{
+                .index = partition.index,
+                .error_code = 0,
+                .base_offset = 0,
+                .log_append_time_ms = -1,
+                .log_start_offset = 0,
+                .record_errors = &.{},
+                .error_message = null,
+            };
         }
+        resp.* = .{ .topic_id = topic.topic_id, .partition_responses = partitions };
     }
+
+    const writer = proto.writer;
+
+    // Reply with a success response. topic_ids and partition indices mirror the
+    // request; the per-partition results are examples. Unlike the request, the
+    // response carries only small metadata, so it is written at once. msg_size
+    // is a placeholder 0, matching how the request prefixes its size.
+    try writer.msg_size(io_writer, 0);
+    try writer.resp_header(io_writer, .{ .correlation_id = correlation_id });
+    try writer.produce_resp(io_writer, .{
+        .responses = responses,
+        .throttle_time_ms = 0,
+    });
 }
 
 /// Logs a partition's records, consuming them from the stream in

@@ -37,7 +37,9 @@ pub const RequestHeader = struct {
 
 // Response Header v1 => correlation_id
 //  correlation_id => INT32
-pub const ResponseHeader = struct {};
+pub const ResponseHeader = struct {
+    correlation_id: i32,
+};
 
 // TODO support tagged struct fields
 // https://cwiki.apache.org/confluence/pages/viewpage.action?pageId=120722234#KIP482:TheKafkaProtocolshouldSupportOptionalTaggedFields-TagHeaders
@@ -113,7 +115,53 @@ pub const PartitionData = struct {
 ///     host => COMPACT_STRING
 ///     port => INT32
 ///     rack => COMPACT_NULLABLE_STRING
-pub const ProduceResponse = struct {};
+///
+/// Unlike the request's partition `records` — record batches that can be
+/// arbitrarily large and are streamed a chunk at a time, never collected in
+/// memory — a produce response carries only small metadata arrays (no record
+/// batches), and the topic/partition counts per response are expected to be
+/// small. So the response is modeled as a single nested data structure that is
+/// read/written at once and kept in memory, rather than streamed. The reader
+/// allocates the arrays (and the nullable strings) into a caller-provided
+/// allocator; the writer just walks slices the caller already holds.
+pub const ProduceResponse = struct {
+    responses: []const TopicResponse,
+    /// The duration in milliseconds for which the request was throttled.
+    throttle_time_ms: i32,
+};
+
+/// One topic_id entry in a produce response's `responses` array, with the
+/// partition responses held inline rather than streamed.
+pub const TopicResponse = struct {
+    topic_id: [16]u8, // UUID
+    partition_responses: []const PartitionResponse,
+};
+
+/// One partition entry in a topic response's `partition_responses` array.
+pub const PartitionResponse = struct {
+    /// The partition index.
+    index: i32,
+    /// The error code, or 0 if there was no error.
+    error_code: i16,
+    /// The base offset assigned to the first record in the batch.
+    base_offset: i64,
+    /// The timestamp the broker appended the batch, or -1 if not set.
+    log_append_time_ms: i64,
+    /// The log start offset.
+    log_start_offset: i64,
+    record_errors: []const RecordError,
+    /// The global error message summarizing the failure, or null.
+    error_message: ?[]const u8,
+};
+
+/// One entry in a partition response's `record_errors` array, describing a
+/// record that caused a batch to be rejected.
+pub const RecordError = struct {
+    /// The batch index of the record that caused the batch to be dropped.
+    batch_index: i32,
+    /// The error message of the record, or null.
+    batch_index_error_message: ?[]const u8,
+};
 
 /// Fetch Request (Version: 18) => { max_wait_ms min_bytes max_bytes isolation_level session_id session_epoch (topics) (forgotten_topics_data) rack_id cluster_id<tag: 0> replica_state<tag: 1> }
 ///   max_wait_ms => INT32
@@ -236,6 +284,73 @@ pub const reader = struct {
         };
     }
 
+    pub fn resp_header(r: *Io.Reader) !ResponseHeader {
+        return .{ .correlation_id = try r.takeInt(i32, BE) };
+    }
+
+    /// Reads a whole produce response into a single nested structure, with the
+    /// `responses` array (and everything below it) allocated into `gpa`. Pass
+    /// an arena to free the entire tree at once.
+    pub fn produce_resp(r: *Io.Reader, gpa: std.mem.Allocator) !ProduceResponse {
+        const responses = try gpa.alloc(TopicResponse, try array_len(r));
+        for (responses) |*resp| resp.* = try topic_response(r, gpa);
+        return .{
+            .responses = responses,
+            .throttle_time_ms = try r.takeInt(i32, BE),
+        };
+    }
+
+    fn topic_response(r: *Io.Reader, gpa: std.mem.Allocator) !TopicResponse {
+        var topic_id: [16]u8 = undefined;
+        try r.readSliceAll(&topic_id);
+        const partitions = try gpa.alloc(PartitionResponse, try array_len(r));
+        for (partitions) |*p| p.* = try partition_response(r, gpa);
+        return .{ .topic_id = topic_id, .partition_responses = partitions };
+    }
+
+    fn partition_response(r: *Io.Reader, gpa: std.mem.Allocator) !PartitionResponse {
+        const index = try r.takeInt(i32, BE);
+        const error_code = try r.takeInt(i16, BE);
+        const base_offset = try r.takeInt(i64, BE);
+        const log_append_time_ms = try r.takeInt(i64, BE);
+        const log_start_offset = try r.takeInt(i64, BE);
+        const record_errors = try gpa.alloc(RecordError, try array_len(r));
+        for (record_errors) |*e| e.* = try record_error(r, gpa);
+        return .{
+            .index = index,
+            .error_code = error_code,
+            .base_offset = base_offset,
+            .log_append_time_ms = log_append_time_ms,
+            .log_start_offset = log_start_offset,
+            .record_errors = record_errors,
+            .error_message = try compact_nullable_str_alloc(r, gpa),
+        };
+    }
+
+    fn record_error(r: *Io.Reader, gpa: std.mem.Allocator) !RecordError {
+        return .{
+            .batch_index = try r.takeInt(i32, BE),
+            .batch_index_error_message = try compact_nullable_str_alloc(r, gpa),
+        };
+    }
+
+    /// Reads the length of a non-nullable COMPACT array, rejecting the null
+    /// marker. The response arrays (responses, partition_responses,
+    /// record_errors) are all non-nullable.
+    fn array_len(r: *Io.Reader) !usize {
+        return @intCast((try compact_size(r)) orelse return Error.ProtocolError);
+    }
+
+    /// Like `compact_nullable_str`, but allocates the string into `gpa` instead
+    /// of borrowing a caller buffer — used by the produce response, which is
+    /// read into an owned data structure rather than streamed.
+    fn compact_nullable_str_alloc(r: *Io.Reader, gpa: std.mem.Allocator) !?[]const u8 {
+        const n: usize = @intCast((try compact_size(r)) orelse return null);
+        const buf = try gpa.alloc(u8, n);
+        try r.readSliceAll(buf);
+        return buf;
+    }
+
     /// NULLABLE_STRING
     /// Represents a sequence of characters or null. For non-null strings, first the
     /// length N is given as an INT16. Then N bytes follow which are the UTF-8
@@ -331,6 +446,48 @@ pub const writer = struct {
         // records is a COMPACT_NULLABLE byte sequence; its bytes follow,
         // written by the caller.
         try compact_size(w, partition.records_size);
+    }
+
+    pub fn resp_header(w: *Io.Writer, header: ResponseHeader) !void {
+        try w.writeInt(i32, header.correlation_id, BE);
+    }
+
+    /// Writes a whole produce response from a single nested structure. Unlike
+    /// the streamed request, the response's small metadata arrays are held in
+    /// memory, so the caller passes the fully populated struct and it is
+    /// written at once. Mirrors `produce_resp` on the reader.
+    pub fn produce_resp(w: *Io.Writer, resp: ProduceResponse) !void {
+        try array_len(w, resp.responses.len);
+        for (resp.responses) |topic| try topic_response(w, topic);
+        try w.writeInt(i32, resp.throttle_time_ms, BE);
+    }
+
+    fn topic_response(w: *Io.Writer, topic: TopicResponse) !void {
+        try w.writeAll(&topic.topic_id);
+        try array_len(w, topic.partition_responses.len);
+        for (topic.partition_responses) |p| try partition_response(w, p);
+    }
+
+    fn partition_response(w: *Io.Writer, partition: PartitionResponse) !void {
+        try w.writeInt(i32, partition.index, BE);
+        try w.writeInt(i16, partition.error_code, BE);
+        try w.writeInt(i64, partition.base_offset, BE);
+        try w.writeInt(i64, partition.log_append_time_ms, BE);
+        try w.writeInt(i64, partition.log_start_offset, BE);
+        try array_len(w, partition.record_errors.len);
+        for (partition.record_errors) |e| try record_error(w, e);
+        try compact_nullable_str(w, partition.error_message);
+    }
+
+    fn record_error(w: *Io.Writer, e: RecordError) !void {
+        try w.writeInt(i32, e.batch_index, BE);
+        try compact_nullable_str(w, e.batch_index_error_message);
+    }
+
+    /// Writes the length of a non-nullable COMPACT array. Mirrors the reader's
+    /// `array_len`.
+    fn array_len(w: *Io.Writer, len: usize) !void {
+        try compact_size(w, @as(u64, @intCast(len)));
     }
 
     fn nullable_str(w: *Io.Writer, str: ?[]const u8) !void {
@@ -541,6 +698,181 @@ test "partition round-trip with null records" {
     const read = try reader.partition_data(&r);
     try testing.expectEqual(2, read.index);
     try testing.expectEqual(null, read.records_size);
+}
+
+test "resp_header round-trip" {
+    var buf: [16]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    try writer.resp_header(&w, .{ .correlation_id = 42 });
+
+    var r = Io.Reader.fixed(&buf);
+    const read = try reader.resp_header(&r);
+    try testing.expectEqual(42, read.correlation_id);
+}
+
+test "record_error round-trip" {
+    var buf: [64]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    try writer.record_error(&w, .{ .batch_index = 7, .batch_index_error_message = "bad record" });
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var r = Io.Reader.fixed(&buf);
+    const read = try reader.record_error(&r, arena.allocator());
+    try testing.expectEqual(7, read.batch_index);
+    try testing.expect(read.batch_index_error_message != null);
+    try testing.expectEqualStrings("bad record", read.batch_index_error_message.?);
+}
+
+test "record_error round-trip with null message" {
+    var buf: [16]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    try writer.record_error(&w, .{ .batch_index = 0, .batch_index_error_message = null });
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var r = Io.Reader.fixed(&buf);
+    const read = try reader.record_error(&r, arena.allocator());
+    try testing.expectEqual(0, read.batch_index);
+    try testing.expect(read.batch_index_error_message == null);
+}
+
+test "partition_response round-trip with record_errors" {
+    var buf: [128]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    const written = PartitionResponse{
+        .index = 3,
+        .error_code = 9,
+        .base_offset = 100,
+        .log_append_time_ms = -1,
+        .log_start_offset = 50,
+        .record_errors = &.{
+            .{ .batch_index = 1, .batch_index_error_message = "oops" },
+        },
+        .error_message = "partition failed",
+    };
+    try writer.partition_response(&w, written);
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var r = Io.Reader.fixed(&buf);
+    const read = try reader.partition_response(&r, arena.allocator());
+    try testing.expectEqual(3, read.index);
+    try testing.expectEqual(9, read.error_code);
+    try testing.expectEqual(100, read.base_offset);
+    try testing.expectEqual(-1, read.log_append_time_ms);
+    try testing.expectEqual(50, read.log_start_offset);
+    try testing.expectEqual(1, read.record_errors.len);
+    try testing.expectEqual(1, read.record_errors[0].batch_index);
+    try testing.expectEqualStrings("oops", read.record_errors[0].batch_index_error_message.?);
+    try testing.expect(read.error_message != null);
+    try testing.expectEqualStrings("partition failed", read.error_message.?);
+}
+
+test "partition_response round-trip without errors" {
+    var buf: [64]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    const written = PartitionResponse{
+        .index = 0,
+        .error_code = 0,
+        .base_offset = 0,
+        .log_append_time_ms = -1,
+        .log_start_offset = 0,
+        .record_errors = &.{},
+        .error_message = null,
+    };
+    try writer.partition_response(&w, written);
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var r = Io.Reader.fixed(&buf);
+    const read = try reader.partition_response(&r, arena.allocator());
+    try testing.expectEqual(0, read.error_code);
+    try testing.expectEqual(0, read.record_errors.len);
+    try testing.expect(read.error_message == null);
+}
+
+test "topic_response round-trip" {
+    var buf: [128]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    const topic_id = [_]u8{0xab} ** 16;
+    const written = TopicResponse{
+        .topic_id = topic_id,
+        .partition_responses = &.{
+            .{
+                .index = 0,
+                .error_code = 0,
+                .base_offset = 10,
+                .log_append_time_ms = -1,
+                .log_start_offset = 0,
+                .record_errors = &.{},
+                .error_message = null,
+            },
+            .{
+                .index = 1,
+                .error_code = 0,
+                .base_offset = 20,
+                .log_append_time_ms = -1,
+                .log_start_offset = 0,
+                .record_errors = &.{},
+                .error_message = null,
+            },
+        },
+    };
+    try writer.topic_response(&w, written);
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var r = Io.Reader.fixed(&buf);
+    const read = try reader.topic_response(&r, arena.allocator());
+    try testing.expectEqualSlices(u8, &topic_id, &read.topic_id);
+    try testing.expectEqual(2, read.partition_responses.len);
+    try testing.expectEqual(0, read.partition_responses[0].index);
+    try testing.expectEqual(10, read.partition_responses[0].base_offset);
+    try testing.expectEqual(1, read.partition_responses[1].index);
+    try testing.expectEqual(20, read.partition_responses[1].base_offset);
+}
+
+test "produce_resp round-trip" {
+    var buf: [256]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    const topic1 = [_]u8{0x11} ** 16;
+    const topic2 = [_]u8{0x22} ** 16;
+    const written = ProduceResponse{
+        .responses = &.{
+            .{
+                .topic_id = topic1,
+                .partition_responses = &.{
+                    .{
+                        .index = 0,
+                        .error_code = 0,
+                        .base_offset = 0,
+                        .log_append_time_ms = -1,
+                        .log_start_offset = 0,
+                        .record_errors = &.{},
+                        .error_message = null,
+                    },
+                },
+            },
+            .{
+                .topic_id = topic2,
+                .partition_responses = &.{},
+            },
+        },
+        .throttle_time_ms = 100,
+    };
+    try writer.produce_resp(&w, written);
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var r = Io.Reader.fixed(&buf);
+    const read = try reader.produce_resp(&r, arena.allocator());
+    try testing.expectEqual(2, read.responses.len);
+    try testing.expectEqualSlices(u8, &topic1, &read.responses[0].topic_id);
+    try testing.expectEqual(1, read.responses[0].partition_responses.len);
+    try testing.expectEqualSlices(u8, &topic2, &read.responses[1].topic_id);
+    try testing.expectEqual(0, read.responses[1].partition_responses.len);
+    try testing.expectEqual(100, read.throttle_time_ms);
 }
 
 test "nullable_str round-trip non-null" {
