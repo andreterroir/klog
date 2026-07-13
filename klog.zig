@@ -122,26 +122,18 @@ fn produce(io_reader: *Io.Reader, io_writer: *Io.Writer, correlation_id: i32) !v
 /// the first chunk.
 fn log_records(io_reader: *Io.Reader, index: i32, records_size: ?u64) !void {
     const size = records_size orelse {
-        log.info("  partition {d}: null records", .{index});
+        log.info("  partition {d}: empty batch", .{index});
         return;
     };
 
-    var chunk: [4096]u8 = undefined;
-    const first_len: usize = @intCast(@min(size, chunk.len));
-    try io_reader.readSliceAll(chunk[0..first_len]);
-    const preview = chunk[0..@min(first_len, 16)];
+    var buf: [16]u8 = undefined;
+    const read = try io_reader.readSliceShort(buf);
     log.info("  partition {d}: {d} record byte(s), first {d}: {x}", .{
         index,
         size,
-        preview.len,
-        preview,
+        read,
+        buf,
     });
 
-    // Drain the remaining bytes, again one chunk at a time.
-    var remaining = size - first_len;
-    while (remaining > 0) {
-        const take: usize = @intCast(@min(remaining, chunk.len));
-        try io_reader.readSliceAll(chunk[0..take]);
-        remaining -= take;
-    }
+    io_reader.discardAll(size - read);
 }
