@@ -127,7 +127,7 @@ fn log_records(io_reader: *Io.Reader, index: i32, records_size: ?u64) !void {
     };
 
     var buf: [16]u8 = undefined;
-    const read = try io_reader.readSliceShort(buf);
+    const read = try io_reader.readSliceShort(&buf);
     log.info("  partition {d}: {d} record byte(s), first {d}: {x}", .{
         index,
         size,
@@ -135,5 +135,5 @@ fn log_records(io_reader: *Io.Reader, index: i32, records_size: ?u64) !void {
         buf,
     });
 
-    io_reader.discardAll(size - read);
+    try io_reader.discardAll(size - read);
 }
