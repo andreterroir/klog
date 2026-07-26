@@ -127,12 +127,13 @@ fn log_records(io_reader: *Io.Reader, index: i32, records_size: ?u64) !void {
     };
 
     var buf: [16]u8 = undefined;
-    const read = try io_reader.readSliceShort(&buf);
+    const b: []u8 = buf[0..@min(buf.len, size)];
+    const read = try io_reader.readSliceShort(b);
     log.info("  partition {d}: {d} record byte(s), first {d}: {x}", .{
         index,
         size,
         read,
-        buf,
+        b
     });
 
     try io_reader.discardAll(size - read);
