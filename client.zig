@@ -14,7 +14,9 @@ pub fn main(init: std.process.Init) !void {
     const host = try net.HostName.init("localhost");
     var stream = try host.connect(io, 8080, .{ .mode = .stream });
     defer stream.close(io);
-    log.info("connected to {s}", .{host.bytes});
+    log.info("connected from {f}", .{stream.socket.address});
+
+    if (true) return;
 
     // unbuffered writer
     var stream_writer = stream.writer(io, &.{});

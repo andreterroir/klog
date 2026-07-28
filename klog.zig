@@ -2,6 +2,7 @@ const std = @import("std");
 const log = std.log;
 const net = std.Io.net;
 const Io = std.Io;
+const Thread = std.Thread;
 
 const proto = @import("protocol");
 
@@ -15,6 +16,7 @@ pub fn main(init: std.process.Init) !void {
     var server = addr.listen(io, .{ .reuse_address = true }) catch |err| switch (err) {
         error.AddressFamilyUnsupported => blk: {
             addr = .{ .ip4 = .unspecified(port) };
+            log.info("falling back to IPv4: {}", .{addr});
             break :blk try addr.listen(io, .{ .reuse_address = true });
         },
         else => return err,
@@ -24,15 +26,14 @@ pub fn main(init: std.process.Init) !void {
 
     while (true) {
         var stream = try server.accept(io);
-        log.debug("accepted a new connection", .{});
         errdefer stream.close(io);
-        const thread = try std.Thread.spawn(.{}, serve, .{ io, stream });
+        const thread = try Thread.spawn(.{}, serve, .{ io, stream });
         thread.detach();
     }
 }
 
 fn serve(io: Io, stream: net.Stream) !void {
-    log.debug("serving on a new thread {}", .{std.Thread.getCurrentId()});
+    log.debug("serving a new connection from {f} on thread {}", .{ stream.socket.address, Thread.getCurrentId() });
     var buf: [1024]u8 = undefined;
     var stream_reader = stream.reader(io, &buf);
 
@@ -41,6 +42,8 @@ fn serve(io: Io, stream: net.Stream) !void {
 
 fn respond(io: Io, io_reader: *Io.Reader, stream: net.Stream) !void {
     const reader = proto.reader;
+
+    log.debug("responding to {f}", .{stream.socket.address});
 
     const req_size = try reader.msg_size(io_reader);
     log.info("expecting a request of {d} bytes", .{req_size});
@@ -131,12 +134,7 @@ fn log_records(io_reader: *Io.Reader, index: i32, records_size: ?u64) !void {
     var buf: [16]u8 = undefined;
     const b = buf[0..@min(buf.len, size)];
     const read = try io_reader.readSliceShort(b);
-    log.info("  partition {d}: {d} record byte(s), first {d}: {x}", .{
-        index,
-        size,
-        read,
-        b
-    });
+    log.info("  partition {d}: {d} record byte(s), first {d}: {x}", .{ index, size, read, b });
 
     try io_reader.discardAll(size - read);
 }
