@@ -4,19 +4,56 @@ const net = std.Io.net;
 
 const proto = @import("protocol");
 
+const server_port = 8080;
+
 pub fn main(init: std.process.Init) !void {
     const writer = proto.writer;
 
     const io = init.io;
+
     // Resolve the host name and connect, letting the standard library race
     // IPv6 and IPv4 candidates (Happy Eyeballs). On dual-stack hosts IPv6 is
     // attempted first; IPv4-only hosts fall back transparently.
     const host = try net.HostName.init("localhost");
-    var stream = try host.connect(io, 8080, .{ .mode = .stream });
+
+    const LookupResult = net.HostName.LookupResult;
+    var lookup_buf: [16]LookupResult = undefined;
+    var lookup_queue: std.Io.Queue(LookupResult) = .init(&lookup_buf);
+    // FIXME: can lookup block when more than 16 results are returned?
+    // https://sheran.io/blog/porting-dns-from-zig-0.15-to-0.16/
+    // https://andrewkelley.me/post/zig-new-async-io-text-version.html
+    try host.lookup(io, &lookup_queue, .{ .port = server_port });
+
+    const IpAddress = std.Io.net.IpAddress;
+    var connect_addr: ?IpAddress = null;
+    while (lookup_queue.getOne(io)) |res| switch (res) {
+        .canonical_name => |name| log.debug("resolved canonical name: {}", .{name}),
+        .address => |addr| {
+            log.debug("resolved address: {f}", .{addr});
+            switch (addr) {
+                .ip6 => {
+                    connect_addr = addr;
+                    break;
+                },
+                .ip4 => {
+                    if (connect_addr == null) connect_addr = addr;
+                },
+            }
+        },
+    } else |err| switch (err) {
+        error.Canceled => |e| return e,
+        // FIXME is the queue guaranteed to be drained at this point or do we
+        // need to await completion?
+        // In other words, does getOne block when there's pending work but the
+        // queue is closed?
+        error.Closed => {},
+    }
+    var stream = if (connect_addr) |addr| blk: {
+        log.debug("selected address {f}", .{addr});
+        break :blk try addr.connect(io, .{ .mode = .stream });
+    } else return net.HostName.LookupError.UnknownHostName;
     defer stream.close(io);
     log.info("connected from {f}", .{stream.socket.address});
-
-    if (true) return;
 
     // unbuffered writer
     var stream_writer = stream.writer(io, &.{});
