@@ -3,20 +3,15 @@ const log = std.log;
 const net = std.Io.net;
 
 const proto = @import("protocol");
+const writer = proto.writer;
 
 const server_port = 8080;
 
 pub fn main(init: std.process.Init) !void {
-    const writer = proto.writer;
-
+    const LookupResult = net.HostName.LookupResult;
     const io = init.io;
 
-    // Resolve the host name and connect, letting the standard library race
-    // IPv6 and IPv4 candidates (Happy Eyeballs). On dual-stack hosts IPv6 is
-    // attempted first; IPv4-only hosts fall back transparently.
     const host = try net.HostName.init("localhost");
-
-    const LookupResult = net.HostName.LookupResult;
     var lookup_buf: [16]LookupResult = undefined;
     var lookup_queue: std.Io.Queue(LookupResult) = .init(&lookup_buf);
     // FIXME: can lookup block when more than 16 results are returned?
