@@ -14,10 +14,8 @@ pub fn main(init: std.process.Init) !void {
     const host = try net.HostName.init("localhost");
     var lookup_buf: [16]LookupResult = undefined;
     var lookup_queue: std.Io.Queue(LookupResult) = .init(&lookup_buf);
-    // FIXME: can lookup block when more than 16 results are returned?
-    // https://sheran.io/blog/porting-dns-from-zig-0.15-to-0.16/
-    // https://andrewkelley.me/post/zig-new-async-io-text-version.html
-    try host.lookup(io, &lookup_queue, .{ .port = server_port });
+    var lookup = try io.concurrent(net.HostName.lookup, .{host, io, &lookup_queue, .{ .port = server_port }});
+    defer lookup.cancel(io) catch |e| log.err("lookup failure upon cancellation {}", .{e});
 
     const IpAddress = std.Io.net.IpAddress;
     var connect_addr: ?IpAddress = null;
