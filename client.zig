@@ -37,11 +37,7 @@ pub fn main(init: std.process.Init) !void {
         },
     } else |err| switch (err) {
         error.Canceled => |e| return e,
-        // FIXME is the queue guaranteed to be drained at this point or do we
-        // need to await completion?
-        // In other words, does getOne block when there's pending work but the
-        // queue is closed?
-        error.Closed => {},
+        error.Closed => {}, // the queue is drained
     }
     var stream = if (connect_addr) |addr| blk: {
         log.debug("selected address {f}", .{addr});
