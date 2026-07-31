@@ -59,14 +59,14 @@ fn respond(io: Io, io_reader: *Io.Reader, stream: net.Stream) !void {
     const io_writer = &stream_writer.interface;
 
     try switch (req_header.api_key) {
-        .produce => produce(io_reader, io_writer, req_header.correlation_id),
+        .produce => produce(io, io_reader, io_writer, req_header.correlation_id),
         else => std.log.err("unsupported API: {}", .{req_header.api_key}),
     };
 
     try io_writer.flush();
 }
 
-fn produce(io_reader: *Io.Reader, io_writer: *Io.Writer, correlation_id: i32) !void {
+fn produce(io: Io, io_reader: *Io.Reader, io_writer: *Io.Writer, correlation_id: i32) !void {
     const reader = proto.reader;
 
     const max_transactional_id = 1024;
@@ -91,7 +91,7 @@ fn produce(io_reader: *Io.Reader, io_writer: *Io.Writer, correlation_id: i32) !v
         const partitions = try gpa.alloc(proto.PartitionResponse, @intCast(topic.partition_data_size));
         for (partitions) |*p| {
             const partition = try reader.partition_data(io_reader);
-            try log_records(io_reader, partition.index, partition.records_size);
+            try log_records(io, io_reader, topic.topic_id, partition);
             // index is taken from the request; the rest are example results a
             // real broker would fill in after persisting the records.
             p.* = .{
@@ -106,6 +106,8 @@ fn produce(io_reader: *Io.Reader, io_writer: *Io.Writer, correlation_id: i32) !v
         }
         resp.* = .{ .topic_id = topic.topic_id, .partition_responses = partitions };
     }
+
+    // TODO fsync before responding to the client
 
     const writer = proto.writer;
 
@@ -125,16 +127,48 @@ fn produce(io_reader: *Io.Reader, io_writer: *Io.Writer, correlation_id: i32) !v
 /// fixed-size chunks so an arbitrarily large records blob never has to be
 /// held in memory at once. Logs the byte count and a short hex preview of
 /// the first chunk.
-fn log_records(io_reader: *Io.Reader, index: i32, records_size: ?u64) !void {
-    const size = records_size orelse {
-        log.info("  partition {d}: empty batch", .{index});
+fn log_records(io: Io, io_reader: *Io.Reader, topic_id: [16]u8, partition: proto.PartitionData) !void {
+    const size = partition.records_size orelse {
+        log.info("  partition {d}: empty batch", .{partition.index});
         return;
     };
 
     var buf: [16]u8 = undefined;
     const b = buf[0..@min(buf.len, size)];
     const read = try io_reader.readSliceShort(b);
-    log.info("  partition {d}: {d} record byte(s), first {d}: {x}", .{ index, size, read, b });
+    log.info("  partition {d}: {d} record byte(s), first {d}: {x}", .{ partition.index, size, read, b });
 
-    try io_reader.discardAll(size - read);
+    // create data directory, if does not exist
+    const data_path = "/tmp/klog/data/";
+    Io.Dir.cwd().createDirPath(io, data_path) catch |e| switch (e) {
+        error.PathAlreadyExists => {},
+        else => return e,
+    };
+    const data_dir = try Io.Dir.openDirAbsolute(io, data_path, .{});
+    defer data_dir.close(io);
+    std.debug.assert(partition.index < 999_999);
+    // ffffffffffffffffffffffffffffffff-999999
+    var path_buf: [39]u8 = undefined;
+    // TODO is there a way to format an i32 without a sign using specifiers?
+    const file_path = try std.fmt.bufPrint(&path_buf, "{x}-{d:06}", .{ topic_id, @as(u64, @intCast(partition.index)) });
+    const data_file = try data_dir.createFile(io, file_path, .{ .truncate = false });
+    defer data_file.close(io);
+
+    var file_buf: [1024]u8 = undefined;
+    var file_writer = data_file.writer(io, &file_buf);
+    var file_io_writer = file_writer.interface;
+    // write preview bytes first
+    try file_io_writer.writeAll(b);
+
+    var to_read = size - @min(buf.len, size);
+    var read_buf: [1024]u8 = undefined;
+    while (to_read > 0) {
+        const read_size = @min(read_buf.len, to_read);
+        try io_reader.readSliceAll(read_buf[0..read_size]);
+        try file_io_writer.writeAll(read_buf[0..read_size]);
+        to_read -= read_size;
+    }
+    try file_writer.flush();
+    // XXX results in a segfault
+    //try file_io_writer.flush();
 }

@@ -14,7 +14,7 @@ pub fn main(init: std.process.Init) !void {
     const host = try net.HostName.init("localhost");
     var lookup_buf: [16]LookupResult = undefined;
     var lookup_queue: std.Io.Queue(LookupResult) = .init(&lookup_buf);
-    var lookup = try io.concurrent(net.HostName.lookup, .{host, io, &lookup_queue, .{ .port = server_port }});
+    var lookup = try io.concurrent(net.HostName.lookup, .{ host, io, &lookup_queue, .{ .port = server_port } });
     defer lookup.cancel(io) catch |e| log.err("lookup failure upon cancellation {}", .{e});
 
     const IpAddress = std.Io.net.IpAddress;
@@ -48,6 +48,7 @@ pub fn main(init: std.process.Init) !void {
     var stream_writer = stream.writer(io, &.{});
     const io_writer = &stream_writer.interface;
 
+    // TODO calculate actual request size
     try writer.msg_size(io_writer, 0);
     const req_header = proto.RequestHeader{
         .api_key = proto.ApiKey.produce,
