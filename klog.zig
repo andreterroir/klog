@@ -156,7 +156,7 @@ fn log_records(io: Io, io_reader: *Io.Reader, topic_id: [16]u8, partition: proto
 
     var file_buf: [1024]u8 = undefined;
     var file_writer = data_file.writer(io, &file_buf);
-    var file_io_writer = file_writer.interface;
+    var file_io_writer = &file_writer.interface;
     // write preview bytes first
     try file_io_writer.writeAll(b);
 
@@ -169,6 +169,4 @@ fn log_records(io: Io, io_reader: *Io.Reader, topic_id: [16]u8, partition: proto
         to_read -= read_size;
     }
     try file_writer.flush();
-    // XXX results in a segfault
-    //try file_io_writer.flush();
 }
