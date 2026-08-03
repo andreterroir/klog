@@ -73,7 +73,7 @@ pub fn main(init: std.process.Init) !void {
     const topic2_uuid = [_]u8{0x22} ** 16;
 
     try writer.topic_data(io_writer, .{ .topic_id = topic1_uuid, .partition_data_size = 1 });
-    try write_partition(io_writer, 0, &[_]u8{ 0xca, 0xfe, 0xba, 0xbe });
+    try write_partition(io_writer, 0, &[_]u8{ 0xca, 0xfe, 0xba, 0xbe, 0xca, 0xfe, 0xba, 0xbe });
 
     try writer.topic_data(io_writer, .{ .topic_id = topic2_uuid, .partition_data_size = 3 });
     try write_partition(io_writer, 0, null);

@@ -158,7 +158,8 @@ fn log_records(io: Io, io_reader: *Io.Reader, topic_id: [16]u8, partition: proto
     var file_writer = data_file.writer(io, &file_buf);
     var file_io_writer = &file_writer.interface;
     // write preview bytes first
-    try file_io_writer.writeAll(b);
+    const length = try data_file.length(io);
+    try data_file.writePositionalAll(io, b, length);
 
     var to_read = size - @min(buf.len, size);
     var read_buf: [1024]u8 = undefined;
