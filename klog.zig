@@ -133,10 +133,9 @@ fn log_records(io: Io, io_reader: *Io.Reader, topic_id: [16]u8, partition: proto
         return;
     };
 
-    var buf: [16]u8 = undefined;
-    const b = buf[0..@min(buf.len, size)];
-    const read = try io_reader.readSliceShort(b);
-    log.info("  partition {d}: {d} record byte(s), first {d}: {x}", .{ partition.index, size, read, b });
+    const preview_size = @min(4, size);
+    const preview_bytes = try io_reader.peek(preview_size);
+    log.info("  partition {d}: {d} record byte(s), first {d}: {x}", .{ partition.index, size, preview_size, preview_bytes });
 
     // create data directory, if does not exist
     const data_path = "/tmp/klog/data/";
@@ -157,11 +156,9 @@ fn log_records(io: Io, io_reader: *Io.Reader, topic_id: [16]u8, partition: proto
     var file_buf: [1024]u8 = undefined;
     var file_writer = data_file.writer(io, &file_buf);
     var file_io_writer = &file_writer.interface;
-    // write preview bytes first
-    const length = try data_file.length(io);
-    try data_file.writePositionalAll(io, b, length);
+    try file_writer.end();
 
-    var to_read = size - @min(buf.len, size);
+    var to_read = size;
     var read_buf: [1024]u8 = undefined;
     while (to_read > 0) {
         const read_size = @min(read_buf.len, to_read);
